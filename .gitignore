@@ -1,0 +1,16 @@
+# Claves: nunca al repositorio
+.env
+
+# Lo que genera el bot se queda en este Mac
+estado/
+diario/
+datos/
+registros/
+informes/
+
+# Carpetas de las pruebas (BOT_PRUEBA=1)
+*-prueba/
+
+__pycache__/
+*.pyc
+.DS_Store

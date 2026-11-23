@@ -1,0 +1,533 @@
+"""Las tres tareas del bot.
+
+    python3 -m bot.tarea manana      # 7:00  informe y plan del día
+    python3 -m bot.tarea apertura    # 15:45 ejecuta el plan en la cuenta simulada
+    python3 -m bot.tarea cierre      # 22:10 balance del día
+
+Opciones: --sin-modelo (solo datos y reglas), --forzar (ignora el horario; para
+pruebas), --con-plan (usa la sesión del plan en vez de la clave; para pruebas).
+Con BOT_PRUEBA=1 delante, todo se escribe en carpetas "-prueba".
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+import traceback
+from concurrent.futures import ThreadPoolExecutor
+
+from . import alpaca, cartera, dossier, gasto, modelo, ordenes
+from . import informe as inf
+from .base import (ESTADO, RAIZ, SUFIJO, ErrorFuente, ahora_madrid, anexar_linea, carpeta_del_dia,
+                   carpeta_informes, escribir_json, leer_json, leer_lineas, reglas)
+
+MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre",
+         "octubre", "noviembre", "diciembre"]
+DIAS = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+
+# ---------------------------------------------------------------- esquemas de respuesta
+S, N = {"type": "string"}, {"type": "number"}
+
+
+def _obj(**props):
+    return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
+
+
+def _lista(x):
+    return {"type": "array", "items": x}
+
+
+def _op(*valores):
+    return {"type": "string", "enum": list(valores)}
+
+
+ESQ_INVESTIGADOR = _obj(
+    resumen=S,
+    hallazgos=_lista(_obj(titulo=S, detalle=S, tickers=_lista(S), sesgo=_op("positivo", "negativo", "neutro"), fuente=S)),
+    candidatos=_lista(_obj(ticker=S, motivo=S, riesgos=S)),
+    alertas=_lista(S))
+ESQ_ESTRATEGA = _obj(
+    panorama=S, tono=_op("riesgo", "neutral", "defensivo"),
+    prioritario=_obj(ticker=S, lectura=S, niveles=S, accion=_op("comprar", "mantener", "esperar", "vender")),
+    ordenes=_lista(_obj(ticker=S, accion=_op("comprar", "vender"), entrada=N, stop=N, objetivo=N, motivo=S,
+                        conviccion=_op("alta", "media", "baja"))),
+    posiciones=_lista(_obj(ticker=S, decision=_op("mantener", "vender"), nuevo_stop=N, comentario=S)),
+    vigilados=_lista(_obj(ticker=S, por_que=S)),
+    noticias_clave=_lista(_obj(titular=S, impacto=S)),
+    agenda=_lista(S), riesgos=_lista(S))
+ESQ_APERTURA = _obj(
+    decisiones=_lista(_obj(ticker=S, decision=_op("ejecutar", "descartar"), motivo=S)),
+    stops=_lista(_obj(ticker=S, nuevo_stop=N, motivo=S)),
+    ventas=_lista(_obj(ticker=S, motivo=S)),
+    comentario=S)
+ESQ_CIERRE = _obj(resumen=S, aciertos=_lista(S), fallos=_lista(S), lecciones=_lista(S), avisos_manana=_lista(S))
+
+
+# ---------------------------------------------------------------- utilidades
+
+def _fecha_larga(a):
+    return "%s %d de %s de %d · %s" % (DIAS[a.weekday()], a.day, MESES[a.month - 1], a.year, a.strftime("%H:%M"))
+
+
+def _api(avisos):
+    try:
+        return alpaca.cliente()
+    except ErrorFuente as e:
+        avisos.append(str(e))
+        return None
+
+
+def _precios(d):
+    p = {t: f["precio"] for t, f in d["universo"].items()}
+    p.update({t: s["ultimo"] for t, s in (d.get("sesion_de_hoy") or {}).items()})
+    return p
+
+
+def _resumen(c, d):
+    return cartera.resumen(c, _precios(d), d["cartera"]["eurusd"], d["indices"]["S&P 500"]["precio"])
+
+
+def _vigilar(c, velas, api, avisos):
+    """Pone la cartera al día: lo ejecutado en Alpaca y los stops que vigila el bot."""
+    hechos = []
+    if api:
+        try:
+            hechos += ordenes.sincronizar(c, api)
+        except ErrorFuente as e:
+            avisos.append("Alpaca: %s" % e)
+    for v in cartera.revisar_stops(c, velas):
+        hechos.append(v)
+        if api and v["via"] == "alpaca":
+            try:
+                api.cerrar(v["ticker"])
+            except ErrorFuente as e:
+                avisos.append("Alpaca no cerró %s: %s" % (v["ticker"], e))
+    return hechos
+
+
+def _subir_stop(c, ticker, nuevo, precio, api, avisos):
+    p = c["posiciones"].get(ticker)
+    if not p or not nuevo or nuevo <= p["stop"] or (precio and nuevo >= precio):
+        return False
+    p["stop"] = round(float(nuevo), 2)
+    if api and p.get("stop_en_broker") and p.get("orden_id"):
+        try:
+            api.mover_stop(p["orden_id"], p["stop"])
+        except ErrorFuente as e:
+            avisos.append("Alpaca no movió el stop de %s: %s" % (ticker, e))
+    return True
+
+
+def _chips(d, costes=None, nivel=None):
+    cr = d["credito_api"]
+    coste = sum(i.get("coste_usd", 0) for i in costes or [])
+    con_plan = d.get("via") == "plan"
+    return [d["modo"], "análisis: %s" % nivel.replace("_", " ") if nivel else None,
+            ("%s: %s $" % ("equivalente de esta tarea" if con_plan else "coste de esta tarea", inf.num(coste))) if costes else None,
+            "modelos con tu plan de Claude" if con_plan else
+            "crédito del mes: %s de %s $" % (inf.num(cr["gastado_mes_usd"] + coste, 1), inf.num(cr["credito_usd"], 0))]
+
+
+def _pie(avisos):
+    extra = ""
+    if avisos:
+        extra = "Avisos de datos: " + inf.e("; ".join(avisos[:4]))[:420] + (" …" if len(avisos) > 4 else "") + "<br>"
+    return extra + inf.PIE
+
+
+def _nota_cerrado(d, nombre, titulo):
+    cuerpo = "<h2>Mercado cerrado</h2><p>Hoy la bolsa de EE. UU. no abre (%s). Próxima sesión: %s.</p>%s" % (
+        inf.e(d["mercado_hoy"]["motivo_cierre"]), inf.e(d["mercado_hoy"]["proxima_sesion"]),
+        inf.bloque_cartera(d["cartera"]))
+    return inf.componer(titulo, _fecha_larga(ahora_madrid()), _chips(d), cuerpo, inf.PIE,
+                        carpeta_informes() / nombre)
+
+
+# ---------------------------------------------------------------- 7:00 mañana
+
+def _fila_corta(f):
+    return {k: f.get(k) for k in ("sector", "precio", "var_1d", "var_5d", "var_1m", "rsi14", "sobre_media50_pct",
+                                  "bajo_maximo_anual_pct", "atr14", "volumen_vs_media", "configuraciones",
+                                  "minimo_10d", "maximo_20d")}
+
+
+def _datos_investigador(papel, d):
+    comun = {"fecha": d["generado"], "nota_datos": d["nota_datos"], "mercado_hoy": d["mercado_hoy"],
+             "prioritarios": d["prioritarios"],
+             "en_cartera": [p["ticker"] for p in d["cartera"]["posiciones"]], "candidatos": d.get("candidatos", [])}
+    u = d["universo"]
+    if papel == "investigador-sectores":
+        comun.update({"sectores": d.get("sectores"), "universo": {t: _fila_corta(f) for t, f in u.items()},
+                      "valoracion": d["valoracion"], "media_sector": d.get("media_sector")})
+    elif papel == "investigador-noticias":
+        interes = set(comun["candidatos"]) | set(comun["en_cartera"]) | set(comun["prioritarios"])
+        comun.update({"noticias": d["noticias"], "universo": {t: _fila_corta(u[t]) for t in interes if t in u}})
+    elif papel == "investigador-macro":
+        comun.update({"indices": d["indices"], "macro": d.get("macro")})
+    else:
+        comun.update({"materias_primas": d.get("materias_primas"), "sectores": d.get("sectores"),
+                      "universo": {t: {k: f.get(k) for k in ("sector", "var_1d", "var_5d", "var_1m")}
+                                   for t, f in u.items() if f["sector"] != "tecnologia"}})
+    return comun
+
+
+def _investigar(d, nivel, a):
+    r = reglas()
+    papeles = ["investigador-noticias", "investigador-sectores", "investigador-macro", "investigador-materias"]
+    if nivel == "bajo":
+        papeles = papeles[:2]
+    fable = nivel == "alto"
+    mod = r["modelos"]["investigador_alto" if fable else "investigador_medio"]
+    tope = r["credito_api"]["tope_por_llamada_usd"]["investigador_fable" if fable else "investigador_sonnet"]
+
+    def uno(papel):
+        return papel, modelo.preguntar("manana", papel, mod, _datos_investigador(papel, d), ESQ_INVESTIGADOR,
+                                       nivel=nivel, web=True, tope_usd=tope, esfuerzo="medium", espera=720,
+                                       carpeta=carpeta_del_dia("datos"))
+    informes, costes = {}, []
+    with ThreadPoolExecutor(max_workers=4) as grupo:
+        for papel, (resp, info) in grupo.map(uno, papeles):
+            costes.append(info)
+            if resp:
+                informes[papel.replace("investigador-", "")] = resp
+    return informes, costes
+
+
+def _estratega(d, informes, nivel, a):
+    r = reglas()
+    datos = {k: d.get(k) for k in ("generado", "nota_datos", "mercado_hoy", "indices", "materias_primas", "sectores", "macro",
+                                   "media_sector", "candidatos", "prioritarios", "valoracion", "reglas", "cartera",
+                                   "marcador", "operaciones_recientes", "grandes_inversores", "avisos_de_ayer",
+                                   "lecciones_recientes")}
+    datos["universo"] = {t: _fila_corta(f) for t, f in d["universo"].items()}
+    datos["titulares"] = [{"ticker": n["ticker"], "titular": n["titular"], "hora": n["hora"]}
+                          for n in d["noticias"]["titulares"][:25]]
+    datos["investigadores"] = informes
+    mod = r["modelos"]["estratega_bajo" if nivel == "bajo" else "estratega"]
+    return modelo.preguntar("manana", "estratega", mod, datos, ESQ_ESTRATEGA, nivel=nivel, web=False,
+                            tope_usd=r["credito_api"]["tope_por_llamada_usd"]["estratega"], esfuerzo="high",
+                            espera=900, carpeta=carpeta_del_dia("datos"))
+
+
+def _poner_veredictos(plan, d, avisos):
+    """Pasa cada orden del plan por las reglas, en orden, descontando caja y huecos."""
+    res = dict(d["cartera"])
+    res["posiciones"] = list(res["posiciones"])
+    for o in plan["ordenes"]:
+        t = o["ticker"] = (o.get("ticker") or "").upper()
+        val = d["valoracion"].get(t)
+        if val is None and o.get("accion") == "comprar" and t in d["universo"]:
+            val = dossier.valoraciones([t], avisos).get(t)
+            if val:
+                d["valoracion"][t] = val
+        o["veredicto"], o["motivos"], cantidad = ordenes.validar(o, res, val)
+        o["cantidad"] = cantidad or None
+        if o["veredicto"] == "APROBADA" and o.get("accion") == "comprar":
+            res["huecos_libres"] -= 1
+            res["caja_usd"] = round(res["caja_usd"] - cantidad * float(o["entrada"]), 2)
+            res["posiciones"].append({"ticker": t})
+
+
+def _pdf_manana(d, plan, nivel, costes, hechos, avisos):
+    c, ind, u, val = d["cartera"], d["indices"], d["universo"], d["valoracion"]
+    cuerpo = [inf.bloque_cartera(c)]
+    if c.get("aportacion_hoy"):
+        cuerpo.append("<p><b>Hoy entra en la cartera: %s.</b></p>" % inf.e(c["aportacion_hoy"]))
+    if not d["mercado_hoy"]["abre_hoy"]:
+        cuerpo.append("<p><b>Hoy no hay mercado (%s).</b> Próxima sesión: %s.</p>" % (
+            inf.e(d["mercado_hoy"]["motivo_cierre"]), inf.e(d["mercado_hoy"]["proxima_sesion"])))
+    elif d["mercado_hoy"].get("cierre_anticipado"):
+        cuerpo.append("<p><b>Sesión corta:</b> hoy la bolsa cierra a las %s.</p>" % d["mercado_hoy"]["cierra_madrid"])
+    cuerpo.append("<h2>Panorama · postura: %s</h2><p>%s</p>" % (inf.e(plan.get("tono", "sin análisis")), inf.e(plan["panorama"])))
+    otros = []
+    for sector, fondos in (d.get("sectores") or {}).items():
+        for nombre, q in fondos.items():
+            otros.append(["%s <small class='gris'>%s</small>" % (inf.e(nombre), inf.sector(sector)), inf.pct(q["var_1d"]),
+                          inf.pct(q["var_5d"]), inf.pct(q["var_1m"])])
+    for nombre, q in (d.get("materias_primas") or {}).items():
+        otros.append([inf.e(nombre), inf.pct(q["var_1d"]), inf.pct(q["var_5d"]), inf.pct(q["var_1m"])])
+    cuerpo.append('<div class="dos"><div><h2>Mercado</h2>%s</div><div><h2>Sectores y materias primas</h2>%s</div></div>' % (
+        inf.bloque_indices(ind, ["S&P 500", "Nasdaq 100", "Russell 2000", "VIX", "Bono 10 años (%)", "Euro/dólar",
+                                 "Futuro S&P 500", "Futuro Nasdaq", "Euro Stoxx 50", "Nikkei 225"]),
+        inf.tabla([("", 0), ("Día", 1), ("5 días", 1), ("Mes", 1)], otros[:14])))
+    if c["posiciones"] or hechos:
+        cuerpo.append("<h2>Posiciones abiertas</h2>" + inf.bloque_posiciones(c))
+    if hechos:
+        cuerpo.append("<h2>Movimientos desde el último informe</h2>" + inf.bloque_operaciones(hechos))
+    cuerpo.append("<h2>Plan del día (se ejecuta en la apertura)</h2>" + inf.bloque_plan(plan["ordenes"]))
+    vig = plan.get("vigilados") or [{"ticker": t, "por_que": ", ".join(u[t]["configuraciones"])} for t in d.get("candidatos", [])[:8]]
+    medias = d.get("media_sector") or {}
+    filas = []
+    for v in vig[:8]:
+        t = v["ticker"].upper()
+        f, x = u.get(t), val.get(t, {})
+        if not f:
+            continue
+        m = medias.get(f["sector"]) or {}
+        filas.append([inf.e(t), inf.sector(f["sector"]), inf.num(f["precio"]), inf.pct(f["var_1d"]), inf.pct(f["var_1m"]),
+                      inf.num(f["rsi14"], 0), inf.num(x.get("per"), 1), inf.num(x.get("per_futuro"), 1),
+                      inf.num(x.get("peg"), 2), inf.num(m.get("per_futuro"), 1), inf.corta(v.get("por_que", ""), 70)])
+    cuerpo.append("<h2>Valores vigilados</h2>" + inf.tabla(
+        [("Valor", 0), ("Sector", 0), ("Precio", 1), ("Día", 1), ("Mes", 1), ("RSI", 1), ("P/E", 1), ("P/E fut.", 1),
+         ("PEG", 1), ("P/E fut. sector", 1), ("Por qué", 0)], filas, "Sin valores vigilados hoy."))
+    pri = plan.get("prioritario") or {}
+    t = (pri.get("ticker") or (d["prioritarios"] or [""])[0]).upper()
+    if t in u:
+        f, x = u[t], val.get(t, {})
+        cuerpo.append("<h2>%s en detalle</h2><p>Precio %s $ (%s en el día, %s en el mes, %s desde máximos del año) · RSI %s · "
+                      "P/E %s · P/E futuro %s · PEG %s · resultados: %s.</p><p>%s%s%s</p>" % (
+                          inf.e(t), inf.num(f["precio"]), inf.pct(f["var_1d"]), inf.pct(f["var_1m"]),
+                          inf.pct(f["bajo_maximo_anual_pct"]), inf.num(f["rsi14"], 0), inf.num(x.get("per"), 1),
+                          inf.num(x.get("per_futuro"), 1), inf.num(x.get("peg"), 2), inf.e(x.get("resultados") or "sin fecha"),
+                          ("<b>%s.</b> " % inf.e(pri["accion"]).capitalize()) if pri.get("accion") else "",
+                          inf.e(pri.get("lectura", "")),
+                          (" <span class='gris'>Niveles: %s</span>" % inf.e(pri["niveles"])) if pri.get("niveles") else ""))
+    noticias = ["%s — %s" % (n["titular"], n["impacto"]) for n in plan.get("noticias_clave", [])[:3]] or \
+               ["%s: %s" % (n["ticker"], n["titular"]) for n in d["noticias"]["titulares"][:4]]
+    cuerpo.append('<div class="dos"><div><h2>Noticias que importan</h2>%s</div><div><h2>Agenda y riesgos</h2>%s</div></div>' % (
+        inf.lista(noticias, "Sin titulares."),
+        inf.lista((plan.get("agenda") or [])[:4] + ["Riesgo: " + x for x in (plan.get("riesgos") or [])[:3]],
+                  "Sin agenda (requiere el análisis del modelo).")))
+    return inf.componer("Informe de la mañana", _fecha_larga(ahora_madrid()), _chips(d, costes, nivel["nivel"]),
+                        "".join(cuerpo), _pie(avisos), carpeta_informes() / "0700-manana.pdf")
+
+
+def manana(a):
+    d, velas, c = dossier.construir("manana")
+    avisos = d["avisos_de_datos"]
+    api = _api(avisos)
+    hechos = _vigilar(c, velas, api, avisos)
+    if hechos:
+        d["cartera"] = _resumen(c, d)
+    ayer = sorted((RAIZ / ("datos" + SUFIJO)).glob("*/cierre.json"))
+    d["avisos_de_ayer"] = (leer_json(ayer[-1], {}).get("avisos_manana", []) if ayer else [])
+    d["lecciones_recientes"] = [x["leccion"] for x in leer_lineas(ESTADO / "lecciones.jsonl")][-6:]
+    nivel, plan, informes, costes = {"nivel": "sin_modelo"}, None, {}, []
+    motivo = "se ha pedido sin modelo" if a.sin_modelo else "no hay forma de llamar a los modelos (falta la clave o el programa claude)"
+    via = d["via"] = None if a.sin_modelo else modelo.autenticacion()
+    if via:
+        nivel = gasto.nivel_para_hoy() if via == "clave" else {"nivel": reglas()["autenticacion"]["nivel_con_plan"]}
+        motivo = "el crédito de API del mes no da para más"
+        if nivel["nivel"] != "sin_modelo":
+            informes, costes = _investigar(d, nivel["nivel"], a)
+            if costes and all(i.get("sin_saldo") for i in costes):
+                motivo = "la organización de la clave de API no tiene saldo"
+                nivel["nivel"] = "sin_modelo"
+            else:
+                plan, info = _estratega(d, informes, nivel["nivel"], a)
+                costes.append(info)
+                motivo = "el estratega no devolvió un plan válido (%s)" % info.get("error", "sin detalle")
+    if not plan:
+        plan = {"panorama": "Sin análisis del modelo: %s. Este informe trae solo los datos y no propone operaciones." % motivo,
+                "tono": "sin análisis", "ordenes": [], "posiciones": []}
+    _poner_veredictos(plan, d, avisos)
+    precios = _precios(d)
+    for p in plan.get("posiciones", []):
+        t = p["ticker"].upper()
+        if p.get("decision") == "vender" and t in c["posiciones"] and not any(o["ticker"] == t for o in plan["ordenes"]):
+            plan["ordenes"].append({"ticker": t, "accion": "vender", "motivo": p.get("comentario", ""),
+                                    "veredicto": "APROBADA", "motivos": []})
+        elif _subir_stop(c, t, p.get("nuevo_stop"), precios.get(t), api, avisos):
+            hechos.append({"hora": ahora_madrid().strftime("%H:%M"), "ticker": t, "accion": "stop subido", "cantidad": 0,
+                           "precio": p["nuevo_stop"], "importe_usd": 0, "motivo": p.get("comentario", "")})
+    plan.update({"fecha": ahora_madrid().date().isoformat(), "nivel": nivel["nivel"],
+                 "coste_usd": round(sum(i.get("coste_usd", 0) for i in costes), 4), "llamadas": costes})
+    carpeta = carpeta_del_dia("datos")
+    escribir_json(carpeta / "plan.json", plan)
+    escribir_json(carpeta / "investigadores.json", informes)
+    cartera.guardar(c)
+    ruta, paginas, escala = _pdf_manana(d, plan, nivel, costes, hechos, avisos)
+    return "mañana: nivel %s, %d órdenes (%d aprobadas), coste %.2f $ -> %s (%s pág., escala %s)" % (
+        nivel["nivel"], len(plan["ordenes"]), sum(1 for o in plan["ordenes"] if o["veredicto"] == "APROBADA"),
+        plan["coste_usd"], ruta, paginas, escala)
+
+
+# ---------------------------------------------------------------- 15:45 apertura
+
+def apertura(a):
+    d, velas, c = dossier.construir("apertura")
+    avisos = d["avisos_de_datos"]
+    if not d["mercado_hoy"]["abre_hoy"]:
+        cartera.guardar(c)
+        return "apertura: mercado cerrado -> %s" % _nota_cerrado(d, "1545-apertura.pdf", "Apertura")[0]
+    api = _api(avisos)
+    hechos = _vigilar(c, velas, api, avisos)
+    plan = d.get("plan_de_la_manana") or {}
+    aprobadas = [o for o in plan.get("ordenes", []) if o.get("veredicto") == "APROBADA"]
+    sesion, precios = d.get("sesion_de_hoy") or {}, _precios(d)
+    descartadas, costes, comentario = [], [], ""
+    abierto = d["mercado_hoy"]["abierto_ahora"] or a.forzar
+    decision = {o["ticker"]: ("ejecutar", "") for o in aprobadas}
+    via = d["via"] = None if a.sin_modelo else modelo.autenticacion()
+    if not abierto:
+        avisos.append("la tarea se ha ejecutado con el mercado cerrado: no se lanza ninguna orden")
+    elif (aprobadas or c["posiciones"]) and via and (via == "plan" or gasto.cabe("apertura")):
+        r = reglas()
+        datos = {k: d.get(k) for k in ("generado", "mercado_hoy", "indices", "plan_de_la_manana", "sesion_de_hoy",
+                                       "noticias", "cartera", "valoracion")}
+        resp, info = modelo.preguntar("apertura", "apertura", r["modelos"]["apertura"], datos, ESQ_APERTURA,
+                                      nivel="apertura", tope_usd=r["credito_api"]["tope_por_llamada_usd"]["apertura"],
+                                      esfuerzo="medium", espera=420, carpeta=carpeta_del_dia("datos"))
+        costes.append(info)
+        if resp:
+            comentario = resp.get("comentario", "")
+            for x in resp.get("decisiones", []):
+                decision[x["ticker"].upper()] = (x["decision"], x.get("motivo", ""))
+            for x in resp.get("stops", []):
+                t = x["ticker"].upper()
+                if _subir_stop(c, t, x.get("nuevo_stop"), precios.get(t), api, avisos):
+                    hechos.append({"hora": ahora_madrid().strftime("%H:%M"), "ticker": t, "accion": "stop subido",
+                                   "cantidad": 0, "precio": x["nuevo_stop"], "importe_usd": 0, "motivo": x.get("motivo", "")})
+            for x in resp.get("ventas", []):
+                if x["ticker"].upper() in c["posiciones"]:
+                    aprobadas.append({"ticker": x["ticker"].upper(), "accion": "vender", "motivo": x.get("motivo", "")})
+        else:
+            avisos.append("la revisión del modelo falló (%s): se aplican solo las reglas" % info.get("error", ""))
+    if abierto:
+        for o in [x for x in aprobadas if x.get("accion") == "vender"] + [x for x in aprobadas if x.get("accion") != "vender"]:
+            t = o["ticker"].upper()
+            precio = (sesion.get(t) or {}).get("ultimo") or precios.get(t)
+            try:
+                if o.get("accion") == "vender":
+                    if t in c["posiciones"] and precio:
+                        hechos.append(ordenes.ejecutar_venta(c, t, precio, o.get("motivo") or "decisión del plan", api))
+                    continue
+                que, por_que = decision.get(t, ("ejecutar", ""))
+                if que != "ejecutar":
+                    descartadas.append([t, por_que or "descartada en la revisión de apertura"])
+                    continue
+                if not precio:
+                    descartadas.append([t, "sin precio de la sesión"])
+                    continue
+                veredicto, motivos, cantidad = ordenes.validar(o, _resumen(c, d), d["valoracion"].get(t), precio)
+                if veredicto != "APROBADA":
+                    descartadas.append([t, "; ".join(motivos)])
+                    continue
+                hechos.append(ordenes.ejecutar_compra(c, o, cantidad, precio, api))
+            except (ErrorFuente, ValueError) as e:
+                descartadas.append([t, str(e)])
+    cartera.guardar(c)
+    res = _resumen(c, d)
+    escribir_json(carpeta_del_dia("datos") / "apertura.json",
+                  {"hechos": hechos, "descartadas": descartadas, "comentario": comentario, "llamadas": costes})
+    cuerpo = [inf.bloque_cartera(res)]
+    if comentario:
+        cuerpo.append("<h2>Cómo ha abierto</h2><p>%s</p>" % inf.e(comentario))
+    cuerpo.append("<h2>Mercado a las %s</h2>%s" % (d["hora_madrid"], inf.bloque_indices(
+        d["indices"], ["S&P 500", "Nasdaq 100", "Russell 2000", "VIX", "Euro/dólar"])))
+    cuerpo.append("<h2>Operaciones lanzadas</h2>" + inf.bloque_operaciones(
+        hechos, "No se ha lanzado ninguna operación."))
+    cuerpo.append("<h2>Órdenes del plan descartadas</h2>" + inf.tabla(
+        [("Valor", 0), ("Motivo", 0)], [[inf.e(t), inf.e(m)] for t, m in descartadas], "Ninguna."))
+    cuerpo.append("<h2>Posiciones tras la apertura</h2>" + inf.bloque_posiciones(res))
+    ruta, paginas, escala = inf.componer("Apertura", _fecha_larga(ahora_madrid()), _chips(d, costes),
+                                         "".join(cuerpo), _pie(avisos), carpeta_informes() / "1545-apertura.pdf")
+    return "apertura: %d operaciones, %d descartadas -> %s (%s pág.)" % (len(hechos), len(descartadas), ruta, paginas)
+
+
+# ---------------------------------------------------------------- 22:10 cierre
+
+def cierre(a):
+    d, velas, c = dossier.construir("cierre")
+    avisos = d["avisos_de_datos"]
+    if not d["mercado_hoy"]["abre_hoy"]:
+        cartera.guardar(c)
+        return "cierre: mercado cerrado -> %s" % _nota_cerrado(d, "2210-cierre.pdf", "Cierre")[0]
+    if not (d["mercado_hoy"].get("ya_cerro") or a.forzar):
+        avisos.append("la bolsa aún no ha cerrado: los resultados son provisionales")
+    api = _api(avisos)
+    _vigilar(c, velas, api, avisos)
+    res = _resumen(c, d)
+    hoy = ahora_madrid().date().isoformat()
+    ops = cartera.operaciones(hoy)
+    resp, costes = None, []
+    via = d["via"] = None if a.sin_modelo else modelo.autenticacion()
+    if via and (via == "plan" or gasto.cabe("cierre")):
+        r = reglas()
+        datos = {k: d.get(k) for k in ("generado", "mercado_hoy", "indices", "plan_de_la_manana", "sesion_de_hoy",
+                                       "noticias", "marcador")}
+        datos.update({"cartera": res, "operaciones_de_hoy": ops,
+                      "apertura": leer_json(carpeta_del_dia("datos") / "apertura.json", {})})
+        resp, info = modelo.preguntar("cierre", "cierre", r["modelos"]["cierre"], datos, ESQ_CIERRE, nivel="cierre",
+                                      tope_usd=r["credito_api"]["tope_por_llamada_usd"]["cierre"], esfuerzo="medium",
+                                      espera=420, carpeta=carpeta_del_dia("datos"))
+        costes.append(info)
+        if not resp:
+            avisos.append("el balance del modelo falló (%s)" % info.get("error", ""))
+    resp = resp or {"resumen": "Sin balance del modelo: el informe trae solo las cifras.", "aciertos": [],
+                    "fallos": [], "lecciones": [], "avisos_manana": []}
+    for leccion in resp["lecciones"]:
+        anexar_linea(ESTADO / "lecciones.jsonl", {"fecha": hoy, "leccion": leccion})
+    cartera.registrar_valor(c, res)
+    cartera.guardar(c)
+    escribir_json(carpeta_del_dia("datos") / "cierre.json", dict(resp, cartera=res, llamadas=costes))
+    diario = RAIZ / ("diario" + SUFIJO) / (hoy + ".md")
+    diario.parent.mkdir(parents=True, exist_ok=True)
+    diario.write_text("# %s\n\n%s\n\n- Cartera: %.2f $ (%.2f €). Día: %s %%. S&P 500: %s %%.\n\n## Operaciones\n\n%s\n\n"
+                      "## Aciertos\n\n%s\n\n## Fallos\n\n%s\n\n## Lecciones\n\n%s\n\n## Avisos para mañana\n\n%s\n" % (
+                          hoy, resp["resumen"], res["valor_usd"], res["valor_eur"], res["resultado_dia_pct"],
+                          res["referencia_dia_pct"],
+                          "\n".join("- %s %s %s × %.4g a %.2f $ (%s)" % (o["hora"], o["accion"], o["ticker"], o["cantidad"],
+                                                                         o["precio"], o["motivo"]) for o in ops) or "- Ninguna.",
+                          *("\n".join("- " + x for x in resp[k]) or "- Nada." for k in
+                            ("aciertos", "fallos", "lecciones", "avisos_manana"))), encoding="utf-8")
+    m = cartera.estadisticas()
+    sp = d["indices"]["S&P 500"]
+    cuerpo = [inf.cifras([
+        ("Valor de la cartera", "%s <small>(%s)</small>" % (inf.dinero(res["valor_usd"]), inf.dinero(res["valor_eur"], "€"))),
+        ("Resultado del día", "%s <small>%s</small>" % (inf.dinero(res["resultado_dia_usd"], "$", True), inf.pct(res["resultado_dia_pct"], 2))),
+        ("S&P 500 hoy", inf.pct(sp["var_1d"], 2)),
+        ("Total frente al S&P 500", inf.dinero(res["ventaja_sobre_referencia_usd"], "$", True))]),
+        "<h2>Balance</h2><p>%s</p>" % inf.e(resp["resumen"]),
+        "<p>Semana: %s · Total: %s (%s) · Aportado: %s · Mismo dinero en el S&P 500: %s · Operaciones cerradas: %s%s</p>" % (
+            inf.pct(res["resultado_semana_pct"], 2), inf.dinero(res["resultado_total_eur"], "€", True),
+            inf.pct(res["resultado_total_pct"], 2), inf.dinero(res["aportado_eur"], "€"), inf.dinero(res["referencia_usd"]),
+            m["cerradas"], (", %d %% con ganancia" % m["acierto_pct"]) if m["cerradas"] else ""),
+        "<h2>Posiciones al cierre</h2>" + inf.bloque_posiciones(res),
+        "<h2>Operaciones de hoy</h2>" + inf.bloque_operaciones(ops, "Hoy no ha habido operaciones."),
+        '<div class="dos"><div><h2>Aciertos</h2>%s<h2>Fallos</h2>%s</div><div><h2>Lecciones</h2>%s<h2>Avisos para mañana</h2>%s</div></div>' % (
+            inf.lista(resp["aciertos"]), inf.lista(resp["fallos"]), inf.lista(resp["lecciones"]),
+            inf.lista(resp["avisos_manana"])),
+        "<h2>Mercado al cierre</h2>" + inf.bloque_indices(d["indices"], ["S&P 500", "Nasdaq 100", "Russell 2000", "VIX", "Euro/dólar"])]
+    ruta, paginas, escala = inf.componer("Cierre", _fecha_larga(ahora_madrid()), _chips(d, costes), "".join(cuerpo),
+                                         _pie(avisos), carpeta_informes() / "2210-cierre.pdf")
+    return "cierre: cartera %.2f $, día %s %% -> %s (%s pág.)" % (res["valor_usd"], res["resultado_dia_pct"], ruta, paginas)
+
+
+# ---------------------------------------------------------------- entrada
+
+def comprobar(a):
+    """Comprobación sin efectos: que el entorno desde el que se lanza la tarea
+    puede leer la configuración, escribir, encontrar los programas y llamar a un modelo."""
+    import os
+    from .base import claves
+    lineas = ["carpeta del proyecto legible: %s" % (RAIZ / "config" / "reglas.json").exists(),
+              "claves leídas de .env: %d de 5" % len(claves()),
+              "herramientas de datos: %s" % (RAIZ.parent / "repos" / "day-trader-skill").exists(),
+              "Chrome para los PDF: %s" % os.path.exists(inf.CHROME)]
+    via = modelo.autenticacion()
+    lineas.append("llamadas a modelos: %s" % (via or "no disponibles"))
+    if via:
+        resp, info = modelo.preguntar("comprobar", "cierre", modelo.SONDEO, {"generado": "comprobación del entorno"},
+                                      ESQ_CIERRE, nivel="comprobar", tope_usd=0.05, esfuerzo="low", espera=120)
+        lineas.append("respuesta del modelo: %s%s" % ("correcta" if info["ok"] else "FALLO", "" if info["ok"] else " (%s)" % info.get("error")))
+    return "comprobación · " + " · ".join(lineas)
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description="Tareas del bot de bolsa (cartera simulada)")
+    ap.add_argument("tarea", choices=["manana", "apertura", "cierre", "comprobar"])
+    ap.add_argument("--sin-modelo", action="store_true", help="solo datos y reglas, sin llamar a ningún modelo")
+    ap.add_argument("--forzar", action="store_true", help="ignora el horario del mercado (para pruebas)")
+    a = ap.parse_args(argv)
+    print("[%s] inicio de %s%s" % (ahora_madrid().strftime("%Y-%m-%d %H:%M:%S"), a.tarea, " (PRUEBA)" if SUFIJO else ""), flush=True)
+    try:
+        tareas = {"manana": manana, "apertura": apertura, "cierre": cierre, "comprobar": comprobar}
+        print("[%s] %s" % (ahora_madrid().strftime("%H:%M:%S"), tareas[a.tarea](a)))
+        return 0
+    except Exception:
+        traceback.print_exc()
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

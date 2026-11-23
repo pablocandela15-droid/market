@@ -1,0 +1,72 @@
+{
+  "capital": {
+    "inicial_eur": 1000,
+    "aportacion_mensual_eur": 200,
+    "dia_aportacion": 1
+  },
+  "riesgo": {
+    "riesgo_por_operacion_pct": 1.0,
+    "max_posiciones": 5,
+    "max_posicion_pct": 25,
+    "colchon_caja_pct": 5,
+    "min_orden_usd": 5,
+    "min_recompensa_riesgo": 1.5,
+    "stop_min_pct": 2,
+    "stop_max_pct": 15,
+    "max_hueco_apertura_pct": 3,
+    "acciones_fraccionadas": true
+  },
+  "valoracion": {
+    "peg_maximo": 2.0,
+    "permitir_sin_beneficios": true,
+    "dias_sin_comprar_antes_de_resultados": 2
+  },
+  "operativa": {
+    "solo_compras": true,
+    "margen": false,
+    "opciones": false,
+    "cortos": false
+  },
+  "referencia": "^GSPC",
+  "informes": {
+    "_nota": "Carpeta de los PDF, relativa a market/. Dentro se ordenan por mes y día: Informes/Noviembre/23/.",
+    "carpeta": "../Informes"
+  },
+  "credito_api": {
+    "usd_mes": 100,
+    "dia_renovacion": 2,
+    "reserva_usd": 10,
+    "coste_estimado_usd": {
+      "alto": 3.5,
+      "medio": 1.6,
+      "bajo": 0.6,
+      "apertura": 0.15,
+      "cierre": 0.15
+    },
+    "tope_por_llamada_usd": {
+      "investigador_fable": 0.9,
+      "investigador_sonnet": 0.35,
+      "estratega": 1.2,
+      "apertura": 0.3,
+      "cierre": 0.3
+    }
+  },
+  "autenticacion": {
+    "_nota": "modo: clave | plan | plan_hasta_tener_saldo. Con el plan no se mira el crédito: se usa nivel_con_plan.",
+    "modo": "plan_hasta_tener_saldo",
+    "nivel_con_plan": "medio"
+  },
+  "modelos": {
+    "estratega": "claude-fable-5-2",
+    "estratega_bajo": "claude-opus-5-5",
+    "investigador_alto": "claude-fable-5-2",
+    "investigador_medio": "claude-sonnet-5-5",
+    "apertura": "claude-sonnet-5-5",
+    "cierre": "claude-sonnet-5-5"
+  },
+  "limites_fuentes": {
+    "finviz_max_valores_dia": 20,
+    "dataroma_max_valores": 10,
+    "noticias_max_valores": 14
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "_nota": "Lista de valores que el bot vigila. No es una recomendación: es el terreno de juego. Edítala cuando quieras.",
+  "prioritarios": ["NVDA"],
+  "sectores": {
+    "tecnologia": [
+      "NVDA", "MSFT", "AAPL", "GOOGL", "AMZN", "META", "AVGO", "AMD", "TSM", "ORCL",
+      "CRM", "PLTR", "MU", "QCOM", "ASML", "ADBE", "NOW", "ANET", "ARM", "SMCI",
+      "NET", "DDOG", "SNOW", "CRWD", "IONQ", "SOUN", "PATH"
+    ],
+    "renovables": [
+      "FSLR", "ENPH", "NEE", "RUN", "SEDG", "PLUG", "BE", "ARRY", "NXT", "SHLS",
+      "CWEN", "BEP", "ORA", "FLNC"
+    ],
+    "nuclear": [
+      "CEG", "VST", "CCJ", "OKLO", "SMR", "LEU", "BWXT", "NNE", "UEC", "UUUU",
+      "DNN", "TLN", "GEV"
+    ],
+    "defensa": [
+      "LMT", "RTX", "NOC", "GD", "LHX", "HII", "KTOS", "AVAV", "LDOS", "BAH",
+      "TDG", "HWM", "RKLB", "CW", "MRCY", "AXON"
+    ]
+  },
+  "fondos_de_contexto": {
+    "_nota": "Solo para medir cómo va cada sector. El bot no los compra.",
+    "tecnologia": ["XLK", "SMH"],
+    "renovables": ["ICLN", "TAN"],
+    "nuclear": ["URA", "NLR"],
+    "defensa": ["ITA", "XAR"]
+  },
+  "mercado": {
+    "S&P 500": "^GSPC",
+    "Nasdaq 100": "^NDX",
+    "Russell 2000": "^RUT",
+    "VIX": "^VIX",
+    "Bono 10 años (%)": "^TNX",
+    "Euro/dólar": "EURUSD=X",
+    "Futuro S&P 500": "ES=F",
+    "Futuro Nasdaq": "NQ=F",
+    "Euro Stoxx 50": "^STOXX50E",
+    "Nikkei 225": "^N225",
+    "Hang Seng": "^HSI"
+  },
+  "materias_primas": {
+    "Petróleo WTI": "CL=F",
+    "Gas natural": "NG=F",
+    "Oro": "GC=F",
+    "Cobre": "HG=F",
+    "Uranio (fondo URA)": "URA",
+    "Litio (fondo LIT)": "LIT"
+  }
+}
