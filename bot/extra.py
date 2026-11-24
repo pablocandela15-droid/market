@@ -14,6 +14,7 @@ import csv
 import datetime as dt
 import io
 import json
+import re
 import time
 
 from .base import RAIZ, ErrorFuente, ahora_madrid, claves, escribir_json, leer_json, pedir
@@ -91,10 +92,23 @@ def sorpresas(ticker, errores):
 
 # ---------------------------------------------------------------- Finnhub
 
-def _finnhub(ruta, errores, **parametros):
-    clave = claves().get("FINNHUB_API_KEY")
+def _clave_finnhub(errores):
+    """La clave de Finnhub, solo si tiene su forma (letras minúsculas y números, sin prefijos).
+    Una clave de otro servicio pegada aquí por error no se envía a Finnhub."""
+    clave = (claves().get("FINNHUB_API_KEY") or "").strip()
     if not clave:
         return None
+    if not re.fullmatch(r"[a-z0-9]{16,48}", clave):
+        if not any("Finnhub" in x for x in errores):
+            errores.append("Finnhub: lo guardado en FINNHUB_API_KEY no tiene forma de clave de Finnhub y no se usa")
+        return None
+    return clave
+
+
+def _finnhub(ruta, errores, **parametros):
+    clave = _clave_finnhub(errores)
+    if not clave:
+        return "clave_no_valida" if (claves().get("FINNHUB_API_KEY") or "").strip() else None
     q = "&".join("%s=%s" % kv for kv in parametros.items())
     try:
         time.sleep(1.1)

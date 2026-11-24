@@ -73,7 +73,7 @@ Todas se cambian en `config/reglas.json`.
 | 0 | Script | Tipos, curva, inflación, paro (con clave) | API de FRED |
 | 0 | Script | Trimestres y crecimiento (con identificación) | `trader-analyst` (SEC) |
 | 0 | Script | Fecha confirmada de resultados de todo el mercado (una consulta al día) y si los 8 valores más interesantes baten lo esperado (últimos 4 trimestres) | Alpha Vantage (`bot/extra.py`) |
-| 0 | Script | Recomendaciones de analistas y compras de directivos, si la clave es válida | Finnhub (`bot/extra.py`) |
+| 0 | Script | Recomendaciones de analistas (12 valores) y compras y ventas de directivos en 90 días (8 valores) | Finnhub (`bot/extra.py`) |
 | 0 | Script | Stops y objetivos alcanzados desde el último informe | Cartera y Alpaca |
 | 1 | Investigador de noticias | Qué mueve el precio y qué ánimo hay, también entre particulares (lo que el buscador devuelve de X y de los foros; no entra en las redes) | Dossier y búsqueda web |
 | 1 | Investigador de sectores | Tendencia y valoración por sector | Dossier y búsqueda web |
@@ -225,10 +225,15 @@ convierten en agentes: son temas de conversación.
   8) y reintenta con esperas crecientes: tarda algo más y no pierde llamadas.
 - **Una sola red:** en un Mac de 8 GB la red tipo Twitter original agota la
   memoria, porque elige lo que ve cada agente con un modelo de más de 1 GB
-  (`twhin-bert`). Hay una variante ligera en pruebas (`plataforma: twitter` con
+  (`twhin-bert`). Hay una variante ligera (`plataforma: twitter` con
   `recomendador_twitter: random`): el bot monta sobre el contenedor una copia
-  del guion de MiroFish sin ese modelo. La encuesta propia y el recuento de lo
-  más valorado aún solo entienden la red tipo Reddit.
+  del guion de MiroFish sin ese modelo. Probada el 24 nov con los 42 agentes del
+  domingo: 24 horas simuladas en 3 minutos, 1 GB de memoria, 213 llamadas sin
+  ningún fallo, 0,38 $ con Haiku; publicaron los 42 (67 publicaciones, 120
+  citas, 44 "me gusta"). Cada llamada lee unos 15.000 tokens, frente a los
+  74.000 de la red tipo Reddit. **Aún no sirve para la simulación del domingo:**
+  la encuesta propia y el recuento de lo más valorado solo entienden la red
+  tipo Reddit. Lo guardado de la prueba está en `datos/2026-11-24/prueba-twitter/`.
 - **Rondas según el presupuesto:** cada ronda cuesta más que la anterior porque
   el hilo crece. El bot calcula cuántas caben en la mitad del tope a partir de
   lo que costó la simulación anterior.
@@ -291,6 +296,6 @@ Cómo se reparte el crédito (`config/reglas.json`, bloque `credito_api`):
 | Explicación de cada decisión en el informe de la mañana | En marcha desde el 24 nov 2026 |
 | Búsqueda web de los investigadores con clave de API | Corregida el 24 nov 2026; probada con el investigador de noticias (5 turnos, 0,13 $ con Sonnet) |
 | Alpha Vantage | Calendario y sorpresas de resultados conectados el 24 nov 2026. El sentimiento de noticias y la ficha de empresa son de pago |
-| Finnhub | Código listo (`bot/extra.py`), pero la clave guardada el 24 nov 2026 es rechazada ("Invalid API key"): hay que volver a copiarla |
+| Finnhub | Funciona desde el 24 nov 2026: recomendaciones de analistas (12 valores) y operaciones de directivos (8 valores) cada mañana. El bot no envía a Finnhub nada que no tenga forma de clave de Finnhub |
 | X (Twitter), Reddit y StockTwits | No se leen directamente: X exige su API de pago, Reddit no da acceso y StockTwits bloquea a los programas. Se usa lo que encuentra el buscador |
 | Operaciones de congresistas y contraste de valoración con la SEC | Sin construir |

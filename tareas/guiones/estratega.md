@@ -26,6 +26,10 @@ Una orden que no las cumpla se bloquea, así que no la propongas:
 - `stop`: bajo un mínimo reciente o a 1,5–2,5 veces el `atr14` del valor. `objetivo`: una resistencia razonable, no un deseo.
 - Revisa cada posición abierta: mantener, subir el stop (nunca bajarlo), alejar el objetivo (nunca acercarlo) o vender. Vende solo si la tesis se ha roto o hay un uso claramente mejor para ese dinero, no por llevar muchos días.
 - Los valores de `prioritarios` llevan siempre lectura propia en `prioritario`, se compren o no.
+- Tres datos de apoyo, cuando vengan. Sirven para afinar y para explicar, no para decidir por sí solos:
+  - `sorpresas_de_resultados`: beneficio real frente al esperado en los últimos cuatro trimestres. Batir previsiones varias veces seguidas da confianza; fallarlas, lo contrario.
+  - `analistas`: cuántos recomiendan comprar, mantener o vender. Casi todos recomiendan comprar casi siempre: lo que informa es la excepción (muchos "mantener" o algún "vender").
+  - `directivos`: compras y ventas en mercado de los directivos en 90 días. Las ventas suelen estar programadas y dicen poco; una compra con dinero propio dice más.
 
 ## La simulación de MiroFish: tu guía principal
 

@@ -6,7 +6,7 @@ Dentro de `<datos>` tienes:
 
 - `encuesta`: lo que respondió cada agente al terminar, ya contado: qué espera del mercado, qué sectores prefiere y evita, qué valores compraría. Es el dato más fiable de la simulación.
 - `respuestas_de_la_encuesta`: una muestra de sus motivos, con sus palabras.
-- `publicaciones` y `comentarios`: lo más valorado del debate.
+- `publicaciones` y `comentarios`: lo más valorado del debate. Según la red simulada (`actividad.red`), los `comentarios` son respuestas en un foro (red tipo Reddit) o citas de otras publicaciones (red tipo Twitter).
 - `informe_de_mirofish`: el informe que escribió el propio MiroFish (puede venir en chino).
 - `fuerza_de_sectores`: lo que hacen de verdad los sectores en bolsa, para contrastar.
 - `pregunta`, `universo` y `en_cartera`.

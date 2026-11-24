@@ -37,19 +37,23 @@ Nota de relevo: si una sesión se corta, aquí está lo necesario para seguir.
 
 ## Siguientes pasos
 
-1. **Finnhub:** la clave guardada en `.env` es rechazada ("Invalid API key").
-   Cuando el usuario la vuelva a copiar, comprobar con
-   `python3 -c "from bot import extra; e=[]; print(extra.analistas(['AMZN'], e), e)"`.
-   El código ya está conectado al dossier.
+1. **Finnhub:** funciona desde el 24 nov (analistas y directivos). Entra en el
+   informe a partir de la mañana del 25 nov.
 2. Revisar los informes automáticos de las 15:45 y las 22:10.
 3. Añadir lo que no necesita claves nuevas: noticias y valores que más se
    mueven de Alpaca, calendario de publicaciones de FRED, operaciones de
    directivos de la SEC.
-4. Inversores particulares: X exige su API de pago, Reddit no da acceso y
+4. **Red tipo Twitter de MiroFish:** la variante ligera funciona (ver
+   tareas-programadas.md). Para usarla un domingo falta adaptar a esa red
+   `encuesta_propia` (lee `reddit_profiles.json`; en Twitter los perfiles van en
+   `twitter_profiles.csv`) y `_lo_mas_valorado` (en Twitter no hay comentarios:
+   hay citas y reenvíos). Al ser unas cinco veces más barata por ronda, abre la
+   puerta a más rondas o a agentes con un modelo mayor.
+5. Inversores particulares: X exige su API de pago, Reddit no da acceso y
    StockTwits bloquea a los programas. Hoy se usa lo que devuelve el buscador.
    Si se quiere más, la vía es la API de pago de X.
-5. Agentes de MiroFish con Sonnet: descartado por coste con los datos medidos
+6. Agentes de MiroFish con Sonnet: descartado por coste con los datos medidos
    (unos 58 $ por simulación). Alternativa por explorar: recortar lo que cada
    agente relee del hilo.
-6. Confirmar en git y subir: nada de lo hecho desde la primera confirmación
-   (`8290aa7`) está confirmado.
+7. En git: todo confirmado y subido hasta `827141a` (24 nov). Lo posterior
+   (filtro de la clave de Finnhub y estas notas) está sin confirmar.

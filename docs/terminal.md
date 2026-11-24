@@ -24,12 +24,12 @@ Antes de añadir piezas conviene saber qué se puede esperar de ellas:
 |---|---|---|---|
 | Precios | Yahoo (no oficial, con retraso), 533 valores en 27 s | Datos de mercado de Alpaca: tiempo real, valores que más se mueven | Nada: tus claves de Alpaca ya lo incluyen |
 | Sectores y mercados | Clasificación propia de 11 sectores y 4 temas; 20 índices y divisas | Flujos de dinero hacia fondos por sector | Fuente por decidir |
-| Valoración | P/E, P/E futuro y PEG de Finviz; medias de Damodaran | Estimaciones y revisiones de analistas, precio objetivo | Clave gratuita de Finnhub |
+| Valoración | P/E, P/E futuro y PEG de Finviz; medias de Damodaran; recomendaciones de analistas (Finnhub) | Revisiones de estimaciones y precio objetivo | Plan de pago de Finnhub |
 | Resultados | Trimestres de la SEC; fechas confirmadas y sorpresas de los últimos 4 trimestres (Alpha Vantage) | Transcripciones de las presentaciones | Fuente por decidir |
 | Noticias | Titulares de Yahoo y búsqueda web de los investigadores | Noticias de Benzinga por valor | Nada: van con Alpaca |
 | Sentimiento de noticias | Ninguno | Puntuación por valor y por tema | Plan de pago de Alpha Vantage (el gratuito no lo incluye) |
 | Inversores particulares | Lo que el buscador devuelve de X y de los foros (2–3 búsquedas del investigador de noticias) | Lectura directa de X | API de pago de X. Reddit no da acceso y StockTwits bloquea a los programas |
-| Directivos | Ninguno | Compras y ventas declaradas (Form 4) | Nada: SEC, o Finnhub |
+| Directivos | Compras y ventas en mercado de los últimos 90 días (Finnhub) | Detalle de cada operación (Form 4) | Nada: SEC |
 | Grandes inversores | Dataroma, los domingos | Posiciones trimestrales (13F) de cualquier fondo | Nada: SEC |
 | Congresistas | Herramienta clonada, sin conectar | Conectarla, o Quiver | Nada, o Quiver (de pago) |
 | Opciones | Ninguno | Ratio de opciones de venta y de compra, volatilidad implícita | Nada: datos básicos de Alpaca |
@@ -43,11 +43,9 @@ Antes de añadir piezas conviene saber qué se puede esperar de ellas:
 ### Gratis (por orden de utilidad)
 
 1. **Finnhub** — finnhub.io, "Get free API key". Recomendaciones de analistas
-   y operaciones de directivos. **Estado (24 nov): la clave guardada no vale.**
-   Finnhub responde "Invalid API key" y lo guardado tiene 64 caracteres, cuando
-   sus claves son más cortas y solo llevan minúsculas y números. En el panel de
-   Finnhub hay que copiar el campo "API Key" (no el "Webhook secret") y pegarlo
-   en la línea `FINNHUB_API_KEY` de `market/.env`.
+   y operaciones de directivos. **Conectada el 24 nov.** La clave aparece en
+   finnhub.io/dashboard como "API Key" (letras minúsculas y números) y va en la
+   línea `FINNHUB_API_KEY` de `market/.env`.
 2. **Alpha Vantage** — conectada el 24 nov. El plan gratuito da calendario y
    sorpresas de resultados, 25 consultas al día. El sentimiento de noticias es
    de pago.

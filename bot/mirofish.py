@@ -17,6 +17,7 @@ Cada predicción se anota y se comprueba después con precios reales.
 from __future__ import annotations
 
 import collections
+import csv
 import datetime as dt
 import json
 import os
@@ -89,7 +90,7 @@ def _cfg():
     base = {"modelo": "claude-haiku-5-5", "modelo_informe": "claude-sonnet-5-5", "modelo_sintesis": "claude-fable-5-2",
             "modelo_participantes": "claude-sonnet-5-5", "tope_usd": 6.0, "max_rondas": 72, "plataforma": "reddit",
             "encuesta": True, "puerto_puente": 8765, "espera_max_minutos": 150, "borrar_grafo_al_terminar": True,
-            "tamano_trozo": 1600, "llamadas_a_la_vez": 6,
+            "tamano_trozo": 1600, "llamadas_a_la_vez": 6, "parte_del_debate": 0.5,
             "dias_de_validez": 8, "plazo_sesiones": 5}
     base.update({k: v for k, v in (reglas().get("mirofish") or {}).items() if not k.startswith("_")})
     return base
@@ -473,6 +474,32 @@ def rondas_hechas(sim_id):
         return 0
 
 
+# Las dos redes guardan lo mismo en la misma base de datos. En la de tipo Reddit se debate con
+# comentarios; en la de tipo Twitter, citando publicaciones (quote_content) o reenviándolas.
+SQL_DICHOS = ("select user_id, coalesce(quote_content, content) from post "
+              "where original_post_id is null or quote_content is not null "
+              "union all select user_id, content from comment")
+SQL_PUBLICACIONES = ("select content from post where original_post_id is null "
+                     "order by num_likes + num_shares desc, post_id desc limit %d")
+SQL_RESPUESTAS = ("select texto from (select content as texto, num_likes as apoyo, comment_id as orden from comment "
+                  "union all select quote_content, num_likes + num_shares, post_id from post where quote_content is not null) "
+                  "order by apoyo desc, orden desc limit %d")
+RED = {"reddit": "un foro", "twitter": "una red social de mensajes cortos"}
+
+
+def _perfiles(base):
+    """Las fichas de los agentes. MiroFish las genera para las dos redes; la de tipo Reddit es la más completa."""
+    perfiles = leer_json(base / "reddit_profiles.json", [])
+    if perfiles:
+        return perfiles
+    try:
+        with open(base / "twitter_profiles.csv", encoding="utf-8", newline="") as f:
+            return [{"user_id": x.get("user_id"), "name": x.get("name"), "bio": x.get("description"),
+                     "persona": x.get("user_char")} for x in csv.DictReader(f)]
+    except OSError:
+        return []
+
+
 def encuesta_propia(sim_id, plataforma, cfg):
     """La encuesta final, hecha por el bot.
 
@@ -481,7 +508,7 @@ def encuesta_propia(sim_id, plataforma, cfg):
     lo mismo, dándole su personalidad y todo lo que escribió durante el debate.
     """
     base = REPO / "backend" / "uploads" / "simulations" / sim_id
-    perfiles = leer_json(base / ("%s_profiles.json" % plataforma), [])
+    perfiles = _perfiles(base)
     tipos = {str(x.get("agent_id")): x.get("entity_type") for x in (leer_json(base / "simulation_config.json", {}).get("agent_configs") or [])}
     ruta_db = base / ("%s_simulation.db" % plataforma)
     if not perfiles or not ruta_db.exists():
@@ -489,9 +516,10 @@ def encuesta_propia(sim_id, plataforma, cfg):
     c = sqlite3.connect(str(ruta_db))
     dichos = collections.defaultdict(list)
     try:
-        for uid, texto in c.execute("select user_id, content from post union all select user_id, content from comment"):
-            dichos[int(uid)].append(texto)
-        foro = [x[0][:350] for x in c.execute("select content from post order by num_likes desc, post_id desc limit 8")]
+        for uid, texto in c.execute(SQL_DICHOS):
+            if texto:
+                dichos[int(uid)].append(texto)
+        foro = [x[0][:350] for x in c.execute(SQL_PUBLICACIONES % 8)]
     finally:
         c.close()
     from .base import claves
@@ -505,8 +533,9 @@ def encuesta_propia(sim_id, plataforma, cfg):
         cuerpo = {"model": cfg["modelo"], "max_tokens": 4000, "messages": [
             {"role": "system", "content": "Eres %s. Profesión: %s.\n%s\n%s\nResponde en español, en primera persona y fiel a tu personaje." % (
                 p.get("name"), p.get("profession", ""), str(p.get("bio", ""))[:700], str(p.get("persona", ""))[:1800])},
-            {"role": "user", "content": "Has participado estos días en un foro sobre la bolsa de EE. UU.\n\nLo que tú escribiste:\n%s\n\n"
-                                        "Lo más comentado del foro:\n%s\n\n%s" % (propio, "\n".join("- " + x for x in foro), PREGUNTA_ENCUESTA)}]}
+            {"role": "user", "content": "Has participado estos días en %s sobre la bolsa de EE. UU.\n\nLo que tú escribiste:\n%s\n\n"
+                                        "Lo más compartido allí:\n%s\n\n%s" % (
+                                            RED.get(plataforma, "un foro"), propio, "\n".join("- " + x for x in foro), PREGUNTA_ENCUESTA)}]}
         req = urllib.request.Request(DESTINO, data=json.dumps(cuerpo).encode(),
                                      headers={"Authorization": "Bearer " + clave, "Content-Type": "application/json"})
         for intento in range(3):
@@ -531,17 +560,23 @@ def encuesta_propia(sim_id, plataforma, cfg):
 
 
 def _lo_mas_valorado(sim_id, plataforma):
-    """Publicaciones y comentarios con más apoyo del debate, leídos de la base de datos de la simulación."""
+    """Publicaciones y respuestas (comentarios o citas) con más apoyo del debate, leídas de la base de datos de la simulación."""
     ruta = REPO / "backend" / "uploads" / "simulations" / sim_id / ("%s_simulation.db" % plataforma)
     if not ruta.exists():
         return [], [], {}
     c = sqlite3.connect(str(ruta))
     try:
-        pubs = [x[0][:500] for x in c.execute("select content from post order by num_likes desc, post_id desc limit 14")]
-        coms = [x[0][:350] for x in c.execute("select content from comment order by num_likes desc, comment_id desc limit 24")]
-        cifras = {t: c.execute('select count(*) from "%s"' % t).fetchone()[0] for t in ("user", "post", "comment", "like")}
-        cifras["activos"] = c.execute("select count(distinct user_id) from trace where action in "
-                                      "('create_post','create_comment','like_post','like_comment')").fetchone()[0]
+        uno = lambda sql: c.execute(sql).fetchone()[0]      # noqa: E731
+        pubs = [x[0][:500] for x in c.execute(SQL_PUBLICACIONES % 14)]
+        coms = [x[0][:350] for x in c.execute(SQL_RESPUESTAS % 24) if x[0]]
+        cifras = {"user": uno("select count(*) from user"),
+                  "post": uno("select count(*) from post where original_post_id is null"),
+                  # respuestas: comentarios (red tipo Reddit) más citas (red tipo Twitter)
+                  "comment": uno("select count(*) from comment") + uno("select count(*) from post where quote_content is not null"),
+                  "reenvios": uno("select count(*) from post where original_post_id is not null and quote_content is null"),
+                  "like": uno('select count(*) from "like"'), "red": plataforma}
+        cifras["activos"] = uno("select count(distinct user_id) from trace where action in "
+                                "('create_post','create_comment','like_post','like_comment','quote_post','repost')")
     except sqlite3.Error:
         return [], [], {}
     finally:
@@ -691,6 +726,7 @@ def ejecutar(a=None):
             anotar(preparada=True)
         if not prog.get("simulada"):
             rondas = rondas_que_caben(cfg)
+            anotar(plataforma=cfg["plataforma"])
             _log("paso 5/7: simulación en %s (%d rondas)%s" % (
                 cfg["plataforma"], rondas, ", reanudada" if prog.get("intentos") else ""))
             antes = gastado().get("coste_usd") or 0.0
@@ -699,8 +735,8 @@ def ejecutar(a=None):
                                                    "force": bool(prog.get("intentos"))}, espera=900)
             anotar(intentos=prog.get("intentos", 0) + 1)
 
-            def cerca_del_tope():      # deja la mitad del tope para la encuesta y el informe
-                return (gastado().get("coste_usd") or 0) >= cfg["tope_usd"] * 0.5
+            def cerca_del_tope():      # el resto del tope queda para la encuesta y el informe
+                return (gastado().get("coste_usd") or 0) >= cfg["tope_usd"] * cfg["parte_del_debate"]
 
             def rondas_terminadas():
                 # Con una sola red, MiroFish no marca la simulación como terminada: se queda
@@ -762,17 +798,23 @@ def ejecutar(a=None):
 
 
 def rondas_que_caben(cfg):
-    """Rondas de debate que caben en la mitad del tope, según lo que costó cada una la última vez.
-    Cada ronda cuesta más que la anterior (el hilo crece), de ahí el margen."""
+    """Rondas de debate que caben en la parte del tope reservada al debate.
+
+    Cada agente relee todo lo que lleva dicho y visto, así que el coste crece con el cuadrado de
+    las rondas: el doble de rondas cuesta unas cuatro veces más. Con lo que costó la última
+    simulación en la misma red se calcula cuántas caben, con un margen. Sin ese dato se pide el
+    máximo: el corte por gasto para el debate a tiempo de todos modos."""
     u = leer_json(ULTIMA, {})
     hechas, coste = u.get("rondas"), (u.get("costes") or {}).get("debate_usd")
-    if hechas and coste:
-        return max(8, min(cfg["max_rondas"], int(cfg["tope_usd"] * 0.5 / (coste / hechas) * 0.8)))
+    if hechas and coste and (u.get("plataforma") or "reddit") == cfg["plataforma"]:
+        caben = hechas * (cfg["tope_usd"] * cfg["parte_del_debate"] / coste) ** 0.5
+        return max(8, min(cfg["max_rondas"], int(caben * 0.9)))
     return cfg["max_rondas"]
 
 
 def _cerrar(carpeta, prog, cfg, d, pregunta, n_participantes, md, encuesta, consumo, coste_reparto, minutos, hoy):
     """Síntesis final, predicciones anotadas, resumen para el estratega y PDF."""
+    cfg = dict(cfg, plataforma=prog.get("plataforma") or cfg["plataforma"])
     pubs, coms, actividad = _lo_mas_valorado(prog["sim"], cfg["plataforma"])
     actividad["rondas"] = rondas_hechas(prog["sim"])
     _log("síntesis con %s" % cfg["modelo_sintesis"])
@@ -798,7 +840,7 @@ def _cerrar(carpeta, prog, cfg, d, pregunta, n_participantes, md, encuesta, cons
     costes = {"simulacion_e_informe_usd": consumo.get("coste_usd", 0.0), "debate_usd": prog.get("coste_debate"),
               "reparto_usd": coste_reparto, "sintesis_usd": info.get("coste_usd", 0.0)}
     costes["total_usd"] = round(costes["simulacion_e_informe_usd"] + costes["reparto_usd"] + costes["sintesis_usd"], 2)
-    escribir_json(ULTIMA, {"fecha": hoy, "resumen": resumen, "encuesta": encuesta, "actividad": actividad,
+    escribir_json(ULTIMA, {"fecha": hoy, "plataforma": cfg["plataforma"], "resumen": resumen, "encuesta": encuesta, "actividad": actividad,
                            "rondas": actividad["rondas"], "participantes": n_participantes, "consumo": consumo,
                            "costes": costes, "minutos": minutos, "informe": str(carpeta / "informe.md")})
     ruta = _pdf(resumen, encuesta, actividad, consumo, costes, minutos, hoy, n_participantes)
@@ -820,7 +862,7 @@ def resintetizar(a=None):
     encuesta = leer_json(carpeta / "encuesta.json", {})
     if cfg["encuesta"] and not encuesta.get("respuestas"):
         _log("encuesta a los agentes, hecha por el bot")
-        encuesta = contar_encuesta(encuesta_propia(prog["sim"], cfg["plataforma"], cfg))
+        encuesta = contar_encuesta(encuesta_propia(prog["sim"], prog.get("plataforma") or "reddit", cfg))
         escribir_json(carpeta / "encuesta.json", encuesta)
         _log("encuesta: %d respuestas válidas de %d agentes" % (encuesta["respuestas"], encuesta["agentes"]))
     previo = leer_json(ULTIMA, {})
@@ -856,9 +898,11 @@ def _pdf(r, enc, act, consumo, costes, minutos, hoy, n_participantes):
                       "Sin predicciones comprobables.")),
         '<div class="dos"><div><h2>En qué no se ponen de acuerdo</h2>%s</div><div><h2>Cuánto fiarse</h2><p>%s</p></div></div>' % (
             inf.lista(r.get("debate")), inf.e(r["fiabilidad"])),
-        "<p class='gris'>%d participantes descritos · %s agentes, %s activos · %s publicaciones y %s comentarios · %d minutos · "
-        "%s llamadas al modelo · coste total %s.</p>" % (
-            n_participantes, act.get("user", "?"), act.get("activos", "?"), act.get("post", "?"), act.get("comment", "?"),
+        "<p class='gris'>%d participantes descritos · %s agentes, %s activos · %s rondas en una red tipo %s · %s publicaciones y %s %s · "
+        "%d minutos · %s llamadas al modelo · coste total %s.</p>" % (
+            n_participantes, act.get("user", "?"), act.get("activos", "?"), act.get("rondas", "?"),
+            "Twitter" if act.get("red") == "twitter" else "Reddit", act.get("post", "?"), act.get("comment", "?"),
+            "citas" if act.get("red") == "twitter" else "comentarios",
             minutos, consumo.get("llamadas", 0), inf.dinero(costes["total_usd"]))]
     pie = ("MiroFish simula opiniones con agentes de inteligencia artificial: no predice precios. Sus predicciones se "
            "comprueban después con precios reales. " + inf.PIE)
