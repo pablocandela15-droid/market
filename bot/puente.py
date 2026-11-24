@@ -15,6 +15,7 @@ simulación, recibe sus peticiones en este Mac y:
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import threading
 import time
@@ -32,15 +33,54 @@ QUITAR = ("temperature", "top_p", "presence_penalty", "frequency_penalty", "logi
 SOLO_JSON = "Responde únicamente con un objeto JSON válido, sin texto antes ni después y sin bloques de código."
 
 
+class Ritmo:
+    """Reparte las peticiones en el tiempo para no pasar del límite de tokens de entrada por minuto.
+
+    La API rechaza (error 429) lo que exceda ese límite, y al final del debate cada petición
+    lleva decenas de miles de tokens. En vez de chocar y reintentar, aquí se espera antes de
+    enviar: tarda algo más y no se pierde ninguna llamada. Los tokens de cada petición se
+    estiman por su tamaño, con una proporción que se corrige con el consumo real."""
+
+    def __init__(self, por_minuto):
+        self.limite = por_minuto
+        self.cerrojo = threading.Lock()
+        self.ventana = collections.deque()      # (momento, tokens estimados) del último minuto
+        self.por_byte = 0.3
+
+    def esperar(self, nbytes):
+        """Bloquea hasta que la petición quepa en el minuto en curso. Devuelve los segundos esperados."""
+        if not self.limite:
+            return 0.0
+        tokens = min(nbytes * self.por_byte, self.limite * 0.9)
+        inicio = time.time()
+        while True:
+            with self.cerrojo:
+                ahora = time.time()
+                while self.ventana and ahora - self.ventana[0][0] > 60:
+                    self.ventana.popleft()
+                if not self.ventana or sum(t for _, t in self.ventana) + tokens <= self.limite:
+                    self.ventana.append((ahora, tokens))
+                    return ahora - inicio
+                pausa = 60 - (ahora - self.ventana[0][0])
+            time.sleep(min(max(pausa, 0.5), 5))
+
+    def aprender(self, nbytes, tokens_reales):
+        if nbytes and tokens_reales:
+            with self.cerrojo:
+                self.por_byte = 0.8 * self.por_byte + 0.2 * tokens_reales / nbytes
+
+
 class Cuenta:
-    def __init__(self, tope, registro, a_la_vez=6):
+    def __init__(self, tope, registro, a_la_vez=6, tokens_por_minuto=0):
         self.tope, self.registro = tope, registro
         self.cerrojo = threading.Lock()
         # MiroFish lanza hasta 30 peticiones a la vez y la API las rechaza por exceso de ritmo.
         # Aquí hacen cola: pasan pocas a la vez, tarda algo más y no se pierde ninguna.
         self.turno = threading.BoundedSemaphore(max(1, a_la_vez))
+        self.ritmo = Ritmo(tokens_por_minuto)
         self.modelo_forzado = None      # si se fija, todas las peticiones van a ese modelo (fase del informe)
         self.d = {"llamadas": 0, "errores": 0, "reintentos": 0, "frenadas_por_ritmo": 0, "a_la_vez": max(1, a_la_vez),
+                  "tokens_por_minuto": tokens_por_minuto, "segundos_de_espera": 0.0,
                   "tokens_entrada": 0, "tokens_salida": 0, "coste_usd": 0.0,
                   "tope_usd": tope, "cortado_por_tope": False, "inicio": time.strftime("%Y-%m-%d %H:%M:%S")}
         self.guardar()
@@ -62,6 +102,11 @@ class Cuenta:
             self.d["coste_usd"] = round(self.d["coste_usd"] + (ent * pe + sal * ps) / 1e6, 6)
             if self.d["llamadas"] % 10 == 0:
                 self.guardar()
+
+    def espera(self, segundos):
+        if segundos > 0.2:
+            with self.cerrojo:
+                self.d["segundos_de_espera"] = round(self.d["segundos_de_espera"] + segundos, 1)
 
     def reintento(self, por_ritmo=False):
         with self.cerrojo:
@@ -151,12 +196,14 @@ def crear_manejador(token, clave, cuenta):
         def _enviar(self, cuerpo, datos):
             ultimo = 6
             for intento in range(ultimo + 1):
+                cuenta.espera(cuenta.ritmo.esperar(len(datos)))
                 req = urllib.request.Request(DESTINO, data=datos, headers={
                     "Authorization": "Bearer " + clave, "Content-Type": "application/json"})
                 try:
                     with urllib.request.urlopen(req, timeout=300) as r:
                         resp = json.loads(r.read())
                     cuenta.sumar(cuerpo.get("model", ""), resp.get("usage") or {})
+                    cuenta.ritmo.aprender(len(datos), (resp.get("usage") or {}).get("prompt_tokens"))
                     return self._json(200, resp)
                 except urllib.error.HTTPError as e:
                     texto = e.read().decode("utf-8", "replace").replace(clave, "***")
@@ -191,11 +238,13 @@ def main(argv=None):
     ap.add_argument("--registro", help="archivo JSON donde se anota el consumo")
     ap.add_argument("--escucha", default="127.0.0.1")
     ap.add_argument("--a-la-vez", type=int, default=6, help="peticiones a la API en curso a la vez; el resto hace cola")
+    ap.add_argument("--tokens-por-minuto", type=int, default=0,
+                    help="tokens de entrada por minuto que no se quieren superar (0: sin límite propio)")
     a = ap.parse_args(argv)
     clave = claves().get("ANTHROPIC_API_KEY")
     if not clave:
         raise SystemExit("Falta ANTHROPIC_API_KEY en market/.env")
-    cuenta = Cuenta(a.tope_usd, a.registro, a.a_la_vez)
+    cuenta = Cuenta(a.tope_usd, a.registro, a.a_la_vez, a.tokens_por_minuto)
     servidor = ThreadingHTTPServer((a.escucha, a.puerto), crear_manejador(a.token, clave, cuenta))
     servidor.daemon_threads = True
     print("puente escuchando en %s:%d (tope %.2f $, %d a la vez)" % (a.escucha, a.puerto, a.tope_usd, a.a_la_vez), flush=True)

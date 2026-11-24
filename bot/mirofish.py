@@ -86,13 +86,16 @@ def _log(texto):
     print("[%s] mirofish: %s" % (ahora_madrid().strftime("%H:%M:%S"), texto), flush=True)
 
 
-def _cfg():
+def _cfg(fecha=None):
     base = {"modelo": "claude-haiku-5-5", "modelo_informe": "claude-sonnet-5-5", "modelo_sintesis": "claude-fable-5-2",
             "modelo_participantes": "claude-sonnet-5-5", "tope_usd": 6.0, "max_rondas": 72, "plataforma": "reddit",
             "encuesta": True, "puerto_puente": 8765, "espera_max_minutos": 150, "borrar_grafo_al_terminar": True,
             "tamano_trozo": 1600, "llamadas_a_la_vez": 6, "parte_del_debate": 0.5,
             "dias_de_validez": 8, "plazo_sesiones": 5}
-    base.update({k: v for k, v in (reglas().get("mirofish") or {}).items() if not k.startswith("_")})
+    propio = reglas().get("mirofish") or {}
+    base.update({k: v for k, v in propio.items() if not k.startswith("_") and k != "solo_el"})
+    # Excepciones de un solo día ("solo_el": {"2026-11-29": {...}}): valen esa fecha y caducan solas.
+    base.update((propio.get("solo_el") or {}).get((fecha or ahora_madrid().date()).isoformat()) or {})
     return base
 
 
@@ -142,7 +145,8 @@ def _get(url, espera=10):
 def arrancar_puente(cfg, token, registro):
     proc = subprocess.Popen([sys.executable, "-m", "bot.puente", "--puerto", str(cfg["puerto_puente"]), "--token", token,
                              "--tope-usd", str(cfg["tope_usd"]), "--registro", str(registro),
-                             "--a-la-vez", str(cfg.get("llamadas_a_la_vez", 6))],
+                             "--a-la-vez", str(cfg.get("llamadas_a_la_vez", 6)),
+                             "--tokens-por-minuto", str(int(cfg.get("tokens_por_minuto", 0)))],
                             cwd=str(RAIZ), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     for _ in range(40):
         try:
@@ -713,8 +717,12 @@ def ejecutar(a=None):
             anotar(sim=_api("POST", "/api/simulation/create", {
                 "project_id": proyecto, "graph_id": grafo, "enable_twitter": True, "enable_reddit": True})["simulation_id"])
         sim = prog["sim"]
+        # MiroFish pide siempre el modelo de su .env. Si la configuración quiere otro para escribir las
+        # fichas de los agentes o para el debate, el puente lo cambia al vuelo.
+        de_mirofish = env.get("LLM_MODEL_NAME")
         if not prog.get("preparada"):
-            _log("paso 4/7: creando los agentes")
+            _modelo_del_puente(cfg, env["LLM_API_KEY"], cfg.get("modelo_perfiles") if cfg.get("modelo_perfiles") != de_mirofish else None)
+            _log("paso 4/7: creando los agentes (con %s)" % (cfg.get("modelo_perfiles") or de_mirofish))
             cuerpo = {"simulation_id": sim}
             if prog.get("tipos_agente"):
                 cuerpo["entity_types"] = prog["tipos_agente"]
@@ -727,8 +735,9 @@ def ejecutar(a=None):
         if not prog.get("simulada"):
             rondas = rondas_que_caben(cfg)
             anotar(plataforma=cfg["plataforma"])
-            _log("paso 5/7: simulación en %s (%d rondas)%s" % (
-                cfg["plataforma"], rondas, ", reanudada" if prog.get("intentos") else ""))
+            _modelo_del_puente(cfg, env["LLM_API_KEY"], cfg["modelo"] if cfg["modelo"] != de_mirofish else None)
+            _log("paso 5/7: simulación en %s (%d rondas, agentes con %s)%s" % (
+                cfg["plataforma"], rondas, cfg["modelo"], ", reanudada" if prog.get("intentos") else ""))
             antes = gastado().get("coste_usd") or 0.0
             _api("POST", "/api/simulation/start", {"simulation_id": sim, "platform": cfg["plataforma"],
                                                    "max_rounds": rondas, "enable_graph_memory_update": False,
@@ -880,7 +889,7 @@ def _pdf(r, enc, act, consumo, costes, minutos, hoy, n_participantes):
     for x in r["sectores"]:
         v = votos.get(_sector(x["sector"]) or x["sector"], {})
         filas.append([inf.sector(x["sector"]).replace(" ", "&nbsp;"), inf.e(x["sesgo"]), inf.e(x["conviccion"]),
-                      str(v.get("a_favor", "")), str(v.get("en_contra", "")), inf.corta(x["motivo"], 150)])
+                      str(v.get("a_favor", "")), str(v.get("en_contra", "")), inf.e(x["motivo"])])
     cuerpo = [
         inf.cifras([("Postura que sale de la simulación", inf.e(r["tono"])),
                     ("El mercado, a cinco sesiones", "%s <small>convicción %s</small>" % (inf.e(r["mercado"]["direccion"]), inf.e(r["mercado"]["conviccion"]))),
@@ -891,10 +900,10 @@ def _pdf(r, enc, act, consumo, costes, minutos, hoy, n_participantes):
         inf.tabla([("Sector", 0), ("Sesgo", 0), ("Convicción", 0), ("A favor", 1), ("En contra", 1), ("Motivo", 0)], filas),
         '<div class="dos"><div><h2>Valores</h2>%s</div><div><h2>Predicciones a %d sesiones</h2>%s</div></div>' % (
             inf.tabla([("Valor", 0), ("Sesgo", 0), ("Motivo", 0)],
-                      [[inf.e(x["ticker"]), inf.e(x["sesgo"]), inf.corta(x["motivo"], 95)] for x in r["valores"][:8]],
+                      [[inf.e(x["ticker"]), inf.e(x["sesgo"]), inf.e(x["motivo"])] for x in r["valores"]],
                       "La simulación no destaca valores concretos."), _cfg()["plazo_sesiones"],
             inf.tabla([("Qué", 0), ("Dirección", 0), ("Motivo", 0)],
-                      [[inf.e(INDICES.get(x["simbolo"], x["simbolo"])), inf.e(x["direccion"]), inf.corta(x["motivo"], 95)] for x in r["predicciones"]],
+                      [[inf.e(INDICES.get(x["simbolo"], x["simbolo"])), inf.e(x["direccion"]), inf.e(x["motivo"])] for x in r["predicciones"]],
                       "Sin predicciones comprobables.")),
         '<div class="dos"><div><h2>En qué no se ponen de acuerdo</h2>%s</div><div><h2>Cuánto fiarse</h2><p>%s</p></div></div>' % (
             inf.lista(r.get("debate")), inf.e(r["fiabilidad"])),

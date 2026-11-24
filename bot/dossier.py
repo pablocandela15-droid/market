@@ -251,6 +251,7 @@ def construir(tarea):
             if tk in fechas and tk in val:
                 val[tk]["fecha_de_resultados"] = fechas[tk]
                 val[tk]["dias_a_resultados"] = (hoy.fromisoformat(fechas[tk]) - hoy).days
+        d["titulares_de_agencia"] = extra.noticias_generales(errores)
         d["sorpresas_de_resultados"] = {tk: s for tk in interes[:8] for s in [extra.sorpresas(tk, errores)] if s}
         d["analistas"] = extra.analistas(interes[:12], errores)
         d["directivos"] = extra.directivos(interes[:8], errores) if d["analistas"] else None

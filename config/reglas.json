@@ -36,30 +36,33 @@
     "usd_mes": 100,
     "dia_renovacion": 2,
     "reserva_usd": 10,
+    "nivel_maximo_sin_mercado": "medio",
     "coste_estimado_usd": {
-      "alto": 3.5,
-      "medio": 1.6,
-      "bajo": 0.6,
+      "alto": 3.75,
+      "medio": 1.85,
+      "bajo": 0.85,
       "apertura": 0.15,
       "cierre": 0.15
     },
     "tope_por_llamada_usd": {
       "investigador_fable": 0.9,
       "investigador_sonnet": 0.35,
+      "mundo": 0.5,
       "estratega": 1.2,
       "apertura": 0.3,
       "cierre": 0.3
     }
   },
   "mirofish": {
-    "_nota": "Simulación semanal (domingos por la tarde). modelo: el de los agentes (el que más llamadas hace); modelo_informe: el que escribe el informe de MiroFish; modelo_sintesis: el que resume todo para el estratega. tope_usd corta el gasto de la simulación y su informe. plataforma: reddit | twitter | parallel; en un Mac de 8 GB solo cabe reddit. llamadas_a_la_vez: cuántas peticiones de los agentes pasan a la vez a la API; el resto hace cola (menos = más lento y menos rechazos por exceso de ritmo). recomendador_twitter: cómo elige la red tipo Twitter lo que ve cada agente: random (sin modelo, cabe en 8 GB), twitter (modelo pequeño) o twhin-bert (el original, más de 1 GB: no cabe). twitter_publicaciones_por_agente: cuántas publicaciones recomendadas ve cada agente en esa red.",
+    "_nota": "Simulación semanal (domingos por la tarde). modelo: el de los agentes (el que más llamadas hace); modelo_informe: el que escribe el informe de MiroFish; modelo_sintesis: el que resume todo para el estratega. tope_usd corta el gasto de la simulación y su informe. plataforma: reddit | twitter | parallel; en un Mac de 8 GB caben reddit y twitter (esta, con el recomendador ligero) y no cabe parallel. max_rondas: horas simuladas como máximo; el coste crece con el cuadrado de las rondas y el debate se corta al gastar parte_del_debate del tope (medido el 24 nov en la red tipo Twitter: 24 h = 0,41 $, 48 h = 1,31 $; unas 85 h caben en 4 $ y las 120 h de la semana completa cuestan unos 7 $). Con tope_usd 9 y parte_del_debate 0.82 el debate dispone de unos 7 $ y quedan 1,6 $ para la encuesta y el informe. tokens_por_minuto: ritmo de envío que el puente no supera (el límite de la cuenta para Haiku es de 2 millones por minuto). llamadas_a_la_vez: cuántas peticiones de los agentes pasan a la vez a la API; el resto hace cola (menos = más lento y menos rechazos por exceso de ritmo). recomendador_twitter: cómo elige la red tipo Twitter lo que ve cada agente: random (sin modelo, cabe en 8 GB), twitter (modelo pequeño) o twhin-bert (el original, más de 1 GB: no cabe). twitter_publicaciones_por_agente: cuántas publicaciones recomendadas ve cada agente en esa red.",
     "modelo": "claude-haiku-5-5",
     "modelo_participantes": "claude-sonnet-5-5",
     "modelo_informe": "claude-sonnet-5-5",
     "modelo_sintesis": "claude-fable-5-2",
-    "tope_usd": 6.0,
-    "max_rondas": 72,
-    "plataforma": "reddit",
+    "tope_usd": 9.0,
+    "max_rondas": 120,
+    "plataforma": "twitter",
+    "parte_del_debate": 0.82,
     "encuesta": true,
     "plazo_sesiones": 5,
     "espera_max_minutos": 150,
@@ -67,8 +70,19 @@
     "borrar_grafo_al_terminar": true,
     "puerto_puente": 8765,
     "llamadas_a_la_vez": 8,
+    "tokens_por_minuto": 1500000,
     "recomendador_twitter": "random",
-    "twitter_publicaciones_por_agente": 5
+    "twitter_publicaciones_por_agente": 5,
+    "solo_el": {
+      "_nota": "Excepciones de un solo día: cada fecha (un domingo) cambia los ajustes de arriba solo ese día. El 29 nov de 2026 se aprovecha crédito que caduca el 2 dic: agentes y fichas con Sonnet, 48 horas simuladas y tope de 32 $ (el debate, unos 26 $ estimados).",
+      "2026-11-29": {
+        "modelo": "claude-sonnet-5-5",
+        "modelo_perfiles": "claude-sonnet-5-5",
+        "max_rondas": 48,
+        "tope_usd": 32.0,
+        "parte_del_debate": 0.88
+      }
+    }
   },
   "autenticacion": {
     "_nota": "modo: clave | plan | plan_hasta_tener_saldo. Con el plan no se mira el crédito: se usa nivel_con_plan.",
@@ -80,6 +94,7 @@
     "estratega_bajo": "claude-opus-5-5",
     "investigador_alto": "claude-fable-5-2",
     "investigador_medio": "claude-sonnet-5-5",
+    "mundo": "claude-sonnet-5-5",
     "apertura": "claude-sonnet-5-5",
     "cierre": "claude-sonnet-5-5"
   },

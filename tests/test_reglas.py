@@ -10,7 +10,8 @@ from pathlib import Path
 
 os.environ["BOT_PRUEBA"] = "1"
 
-from bot import cartera, ordenes  # noqa: E402
+from bot import cartera, gasto, mirofish, ordenes, tarea  # noqa: E402
+from bot import informe as inf  # noqa: E402
 
 # Universo fijo para las pruebas: así no dependen de descargar la lista del S&P 500.
 ordenes.valores_del_universo = lambda: {"NVDA": "Tecnología", "JPM": "Finanzas"}
@@ -156,3 +157,80 @@ class Stops(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Informe(unittest.TestCase):
+    """El informe no recorta textos y la sección del mundo agrupa por temas."""
+
+    def test_el_mundo_hoy(self):
+        largo = "Frase larga que antes se habría cortado con puntos suspensivos. " * 6
+        m = {"resumen": "El día en dos frases.", "noticias": [
+            {"categoria": "Tecnología", "titular": "Una empresa presenta un chip", "que_ha_pasado": largo,
+             "por_que_importa": "Cambia el mercado.", "fuente": "Medio, 24 nov"},
+            {"categoria": "Política y geopolítica", "titular": "Dos países firman un acuerdo", "que_ha_pasado": "Pasó ayer.",
+             "por_que_importa": "Baja la tensión.", "fuente": "Agencia"},
+            {"categoria": "Tecnología", "titular": "Otra noticia de tecnología", "que_ha_pasado": "Pasó hoy.",
+             "por_que_importa": "Importa.", "fuente": "Medio"}]}
+        h = tarea._el_mundo_hoy(m)
+        self.assertIn(inf.e(largo.strip()), h)                       # el texto entra entero
+        self.assertNotIn("…", h)
+        self.assertEqual(h.count("class='cat'"), 2)                  # un rótulo por tema, no por noticia
+        self.assertLess(h.index("Dos países"), h.index("Una empresa"))    # política va antes que tecnología
+        self.assertEqual(tarea._el_mundo_hoy(None), "")
+        self.assertEqual(tarea._el_mundo_hoy({"noticias": []}), "")
+
+    def test_las_tablas_no_recortan(self):
+        motivo = "Motivo muy largo que tiene que salir completo en la tabla del informe. " * 4
+        h = inf.bloque_operaciones([{"hora": "15:45", "ticker": "NVDA", "accion": "compra", "cantidad": 2, "precio": 100.0,
+                                     "importe_usd": 200.0, "motivo": motivo}])
+        self.assertIn(inf.e(motivo), h)
+        self.assertFalse(hasattr(inf, "corta"))
+
+
+
+class NivelDeLaManana(unittest.TestCase):
+    """Reparto del crédito entre las mañanas: tope sin mercado y nivel alto para los lunes."""
+    C = {"alto": 3.0, "medio": 1.2, "bajo": 0.8}
+
+    def n(self, dinero, dias, mercado=True, lunes=False, lunes_despues=0):
+        return gasto.elegir_nivel(dinero, dias, mercado, lunes, lunes_despues, self.C)[0]
+
+    def test_con_credito_de_sobra_todo_va_en_alto(self):
+        self.assertEqual(self.n(100.0, 10, lunes_despues=1), "alto")
+
+    def test_sin_mercado_nunca_pasa_de_medio(self):
+        self.assertEqual(self.n(100.0, 10, mercado=False), "medio")
+
+    def test_alto_solo_si_los_demas_dias_siguen_teniendo_analisis(self):
+        # 10 mañanas: una en alto y nueve en medio cuestan 13,8
+        self.assertEqual(self.n(13.8, 10), "alto")
+        self.assertEqual(self.n(13.7, 10), "medio")
+
+    def test_el_alto_se_guarda_para_los_lunes(self):
+        # Sobra para un día en alto, pero queda un lunes por delante: hoy va en medio y el lunes en alto.
+        self.assertEqual(self.n(14.0, 10, lunes_despues=1), "medio")
+        self.assertEqual(self.n(14.0, 10, lunes=True, lunes_despues=1), "alto")
+        self.assertEqual(self.n(16.0, 10, lunes_despues=1), "alto")       # sobra para hoy y para el lunes
+
+    def test_va_bajando_de_nivel_y_al_final_sin_modelo(self):
+        self.assertEqual(self.n(9.0, 10), "medio")       # 1,2 + 9 × 0,8 = 8,4
+        self.assertEqual(self.n(8.0, 10), "bajo")
+        self.assertEqual(self.n(0.5, 10), "sin_modelo")
+
+
+
+class ExcepcionDeUnDia(unittest.TestCase):
+    """Los ajustes de MiroFish de "solo_el" valen su fecha y ninguna otra."""
+
+    def test_solo_ese_dia(self):
+        original = mirofish.reglas
+        mirofish.reglas = lambda: {"mirofish": {"modelo": "claude-haiku-5-5", "tope_usd": 9.0, "max_rondas": 120,
+                                                "solo_el": {"_nota": "x", "2026-11-29": {"modelo": "claude-sonnet-5-5",
+                                                                                         "tope_usd": 32.0, "max_rondas": 48}}}}
+        try:
+            domingo, siguiente = mirofish._cfg(dt.date(2026, 11, 29)), mirofish._cfg(dt.date(2026, 12, 6))
+        finally:
+            mirofish.reglas = original
+        self.assertEqual((domingo["modelo"], domingo["tope_usd"], domingo["max_rondas"]), ("claude-sonnet-5-5", 32.0, 48))
+        self.assertEqual((siguiente["modelo"], siguiente["tope_usd"], siguiente["max_rondas"]), ("claude-haiku-5-5", 9.0, 120))
+        self.assertNotIn("solo_el", domingo)

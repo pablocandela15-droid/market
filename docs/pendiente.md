@@ -17,6 +17,13 @@ Nota de relevo: si una sesión se corta, aquí está lo necesario para seguir.
 
 ## Hecho el 24 nov por la mañana
 
+- **Reparto del crédito entre las mañanas** (`elegir_nivel` en `bot/gasto.py`):
+  días sin mercado en nivel medio como mucho y nivel alto para los días de
+  mercado, los lunes primero. Pedido por el usuario el 24 nov.
+- **El informe de la mañana tiene dos páginas, no recorta ningún texto** y
+  trae la sección "El mundo hoy": un redactor (`tareas/guiones/mundo.md`,
+  `_mundo` y `_el_mundo_hoy` en `bot/tarea.py`) busca en la web lo más
+  importante de las últimas 24 horas. Pedido por el usuario el 24 nov.
 - **El informe de la mañana explica cada decisión.** De cada compra, venta y
   posición que se mantiene: por qué, qué esperamos y cuándo saldríamos
   (`ESQ_ESTRATEGA` y `_que_hacemos` en `bot/tarea.py`, sección "Cómo explicar
@@ -43,17 +50,28 @@ Nota de relevo: si una sesión se corta, aquí está lo necesario para seguir.
 3. Añadir lo que no necesita claves nuevas: noticias y valores que más se
    mueven de Alpaca, calendario de publicaciones de FRED, operaciones de
    directivos de la SEC.
-4. **Red tipo Twitter de MiroFish:** la variante ligera funciona (ver
-   tareas-programadas.md). Para usarla un domingo falta adaptar a esa red
-   `encuesta_propia` (lee `reddit_profiles.json`; en Twitter los perfiles van en
-   `twitter_profiles.csv`) y `_lo_mas_valorado` (en Twitter no hay comentarios:
-   hay citas y reenvíos). Al ser unas cinco veces más barata por ronda, abre la
-   puerta a más rondas o a agentes con un modelo mayor.
+4. **Red tipo Twitter de MiroFish:** es la red por defecto desde el 24 nov, con
+   más rondas (ver tareas-programadas.md). Probados por separado el debate (48
+   horas simuladas), la encuesta propia y el recuento. Sin probar de punta a
+   punta: lo será la simulación del domingo 29 nov; revisar su registro, cuántas
+   rondas hizo y si el reparto por minuto evitó los rechazos de la API.
+   El usuario pidió más rondas y el 24 nov subió el tope a 9 $ para simular la
+   semana completa (120 horas). Comprobar el domingo si el coste real se parece
+   al estimado (unos 7 $ de debate) y ajustar `parte_del_debate` si hace falta.
+   Consecuencia avisada: en un mes entero quedan unos 47 $ para las mañanas, así
+   que la mayoría irá en nivel medio (ver "Consumo y crédito de API").
+   **El domingo 29 nov es especial** (`mirofish.solo_el` en `config/reglas.json`):
+   agentes Sonnet, 48 horas simuladas, tope de 32 $. Lo pidió el usuario el 24
+   nov para aprovechar crédito que caduca el 2 dic. Después, comparar esa
+   síntesis con la del 23 nov (Haiku) y contarle si se nota la diferencia; el
+   6 dic vuelve sola a Haiku con 120 horas.
 5. Inversores particulares: X exige su API de pago, Reddit no da acceso y
    StockTwits bloquea a los programas. Hoy se usa lo que devuelve el buscador.
    Si se quiere más, la vía es la API de pago de X.
 6. Agentes de MiroFish con Sonnet: descartado por coste con los datos medidos
    (unos 58 $ por simulación). Alternativa por explorar: recortar lo que cada
    agente relee del hilo.
-7. En git: todo confirmado y subido hasta `827141a` (24 nov). Lo posterior
-   (filtro de la clave de Finnhub y estas notas) está sin confirmar.
+7. En git: todo confirmado y subido el 24 nov (noticias del mundo, informe de
+   dos páginas sin recortes, red tipo Twitter, reparto por minuto del puente,
+   tope de MiroFish a 9 $, reparto del crédito entre las mañanas y la excepción
+   del 29 nov).

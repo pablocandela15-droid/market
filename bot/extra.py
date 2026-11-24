@@ -159,3 +159,22 @@ def directivos(tickers, errores):
             ventas = sum(1 for f in filas if (f.get("change") or 0) < 0 and f.get("transactionCode") == "S")
             out[t] = {"compras_en_mercado": compras, "ventas_en_mercado": ventas, "dias": 90}
     return out or None
+
+
+def noticias_generales(errores, maximo=30, horas=30):
+    """Titulares generales de las últimas horas (Finnhub). Sirven de punto de partida al redactor de
+    noticias del mundo; no se publican tal cual."""
+    r = _finnhub("/news", errores, category="general")
+    if not isinstance(r, list):
+        return []
+    desde = time.time() - horas * 3600
+    out = []
+    for n in sorted(r, key=lambda x: -(x.get("datetime") or 0)):
+        if (n.get("datetime") or 0) < desde or not n.get("headline"):
+            continue
+        out.append({"titular": str(n["headline"])[:200], "medio": n.get("source"),
+                    "hora_utc": dt.datetime.fromtimestamp(n["datetime"], dt.timezone.utc).strftime("%d/%m %H:%M"),
+                    "resumen": str(n.get("summary") or "")[:220]})
+        if len(out) >= maximo:
+            break
+    return out

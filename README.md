@@ -1,8 +1,9 @@
 # market · bot de bolsa con cartera simulada
 
 Analiza el mercado tres veces al día, decide operaciones de varios días sobre
-una cartera simulada (1.000 € iniciales y 200 € al mes) y deja un PDF de una
-página en cada ejecución, ordenado por mes y día. **No opera con dinero real.**
+una cartera simulada (1.000 € iniciales y 200 € al mes) y deja un PDF en
+cada ejecución (dos páginas el de la mañana, con las noticias del mundo; una los
+demás), ordenado por mes y día. **No opera con dinero real.**
 
 No es asesoramiento financiero. Es software que lee datos públicos, aplica unas
 reglas y registra una simulación.

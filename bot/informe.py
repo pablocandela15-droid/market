@@ -13,6 +13,9 @@ from pathlib import Path
 
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 ESCALAS = (1.0, 0.95, 0.9, 0.86, 0.82, 0.78, 0.74, 0.71, 0.68)
+# Con más de una página hay sitio: se empieza por letra más grande.
+ESCALAS_AMPLIAS = (1.15, 1.08, 1.0, 0.95, 0.9, 0.86, 0.82, 0.78)
+LEGIBLE = 0.86      # si ni así cabe, se usa esta escala y las páginas que hagan falta: no se recorta texto
 
 CSS = """
 @page { size: A4; margin: 9mm 10mm; }
@@ -26,7 +29,11 @@ h1 { font-size: 15pt; margin: 0; letter-spacing: -0.2px; }
 .chips span { display: inline-block; border: 1px solid #c9d1d9; border-radius: 9px; padding: 1px 7px;
               margin-left: 4px; font-size: 7.4pt; color: #57606a; }
 h2 { font-size: 8.6pt; text-transform: uppercase; letter-spacing: 0.5px; color: #57606a;
-     margin: 8px 0 3px; border-bottom: 1px solid #d8dee4; padding-bottom: 1px; }
+     margin: 8px 0 3px; border-bottom: 1px solid #d8dee4; padding-bottom: 1px; break-after: avoid; }
+p, li, tr, .cifra { break-inside: avoid; }
+.columnas { column-count: 2; column-gap: 16px; }
+.columnas p { margin: 0 0 5px; }
+.cat { font-size: 7pt; text-transform: uppercase; letter-spacing: 0.4px; color: #57606a; font-weight: 600; }
 .dos { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
 table { border-collapse: collapse; width: 100%%; }
 th { text-align: left; font-weight: 600; color: #57606a; font-size: 7.4pt; border-bottom: 1px solid #c9d1d9;
@@ -48,14 +55,6 @@ footer { margin-top: 7px; border-top: 1px solid #d8dee4; padding-top: 3px; font-
 
 def e(x):
     return html.escape(str(x)) if x is not None else ""
-
-
-def corta(texto, n):
-    """Recorta en un espacio y añade puntos suspensivos; devuelve HTML ya escapado."""
-    texto = str(texto or "")
-    if len(texto) <= n:
-        return e(texto)
-    return e(texto[:n].rsplit(" ", 1)[0].rstrip(" ,;:.") + "…")
 
 
 def num(x, dec=2):
@@ -104,7 +103,7 @@ def cifras(pares):
 
 
 SECTOR = {"tecnologia": "Tecnología", "renovables": "Renovables", "nuclear": "Nuclear", "defensa": "Defensa",
-          "Inteligencia artificial y chips": "IA y chips", "Consumo discrecional": "Consumo discr."}
+          "Inteligencia artificial y chips": "IA y chips"}
 
 
 def sector(s):
@@ -115,9 +114,13 @@ def _paginas(ruta):
     return len(re.findall(rb"/Type\s*/Page(?![s])", Path(ruta).read_bytes()))
 
 
-def componer(titulo, subtitulo, chips, cuerpo, pie, ruta_pdf):
+def componer(titulo, subtitulo, chips, cuerpo, pie, ruta_pdf, paginas_max=1):
     """Escribe el HTML y el PDF. Devuelve (ruta, páginas, escala). Si no hay
-    Chrome, deja el HTML y devuelve su ruta."""
+    Chrome, deja el HTML y devuelve su ruta.
+
+    Se prueba de la letra más grande a la más pequeña hasta que quepa en
+    `paginas_max`. Los textos nunca se recortan: si ni con la letra pequeña
+    cabe, se vuelve a una letra legible y el informe ocupa una página más."""
     ruta_pdf = Path(ruta_pdf)
     ruta_pdf.parent.mkdir(parents=True, exist_ok=True)
     ruta_html = ruta_pdf.with_suffix(".html")
@@ -132,18 +135,25 @@ def componer(titulo, subtitulo, chips, cuerpo, pie, ruta_pdf):
     paginas = escala = None
     borrador = ruta_pdf.with_name("." + ruta_pdf.name + ".tmp")   # el PDF definitivo aparece ya terminado
     with tempfile.TemporaryDirectory() as perfil:
-        for escala in ESCALAS:
+        def imprimir(escala):
             ruta_html.write_text(plantilla % (e(titulo), CSS % {"escala": escala}, e(titulo), e(subtitulo),
                                               chips_html, cuerpo, pie), encoding="utf-8")
             subprocess.run([CHROME, "--headless=new", "--disable-gpu", "--no-pdf-header-footer",
                             "--no-first-run", "--user-data-dir=" + perfil,
                             "--print-to-pdf=" + str(borrador), ruta_html.as_uri()],
                            capture_output=True, timeout=120)
-            if not borrador.exists():
+            return _paginas(borrador) if borrador.exists() else None
+        for escala in (ESCALAS if paginas_max <= 1 else ESCALAS_AMPLIAS):
+            paginas = imprimir(escala)
+            if paginas is None:
                 return ruta_html, None, None
-            paginas = _paginas(borrador)
-            if paginas <= 1:
+            if paginas <= paginas_max:
                 break
+        else:
+            escala = LEGIBLE
+            paginas = imprimir(escala)
+            if paginas is None:
+                return ruta_html, None, None
     os.replace(borrador, ruta_pdf)
     ruta_html.unlink(missing_ok=True)
     return ruta_pdf, paginas, escala
@@ -187,7 +197,7 @@ def bloque_posiciones(c, vacio="Sin posiciones abiertas."):
 def bloque_operaciones(ops, vacio="Sin operaciones."):
     filas = [[e(o["hora"]), e(o["ticker"]), e(o["accion"]), num(o["cantidad"], 4 if o["cantidad"] != int(o["cantidad"]) else 0),
               num(o["precio"]), dinero(o["importe_usd"]),
-              dinero(o.get("resultado_usd"), "$", True) if o["accion"] == "venta" else "", corta(o.get("motivo", ""), 90)]
+              dinero(o.get("resultado_usd"), "$", True) if o["accion"] == "venta" else "", e(o.get("motivo", ""))]
              for o in ops]
     return tabla([("Hora", 0), ("Valor", 0), ("Acción", 0), ("Acciones", 1), ("Precio", 1), ("Importe", 1),
                   ("Resultado", 1), ("Motivo", 0)], filas, vacio)
@@ -204,11 +214,11 @@ def bloque_plan(ordenes, vacio="Hoy no hay órdenes en el plan.", con_motivo=Tru
                       num(o.get("cantidad"), 4 if o.get("cantidad") and o["cantidad"] != int(o["cantidad"]) else 0) if o.get("cantidad") else "",
                       dinero(o["cantidad"] * o["entrada"]) if o.get("cantidad") and o.get("entrada") else "",
                       '<span class="%s">%s</span>' % ("ok" if ok else "no", e(o.get("veredicto", ""))),
-                      corta(detalle, 150)])
+                      e(detalle)])
     cab = [("Valor", 0), ("Acción", 0), ("Entrada", 1), ("Stop", 1), ("Objetivo", 1), ("Acciones", 1),
            ("Importe", 1), ("Reglas", 0), ("Motivo", 0)]
     if not con_motivo:          # el motivo ya va explicado aparte; aquí solo las notas de las reglas
         cab[-1] = ("Nota de las reglas", 0)
         for f, o in zip(filas, ordenes):
-            f[-1] = corta("; ".join(o.get("motivos") or []), 110)
+            f[-1] = e("; ".join(o.get("motivos") or []))
     return tabla(cab, filas, vacio)

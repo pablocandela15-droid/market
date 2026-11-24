@@ -37,7 +37,7 @@ cita cada paso están en [estado-del-arte.md](estado-del-arte.md).
 | Valoración | Sin compra con PEG por encima de 2, sin datos, o a 2 días o menos de resultados |
 | Ejecución | El bot decide solo, únicamente contra la dirección de simulación de Alpaca |
 | Referencia | El mismo dinero, el mismo día, en el S&P 500 (sin dividendos) |
-| Salida | Un PDF de una página por tarea en `Informes/<Mes>/<día>/`, en la carpeta del proyecto |
+| Salida | Un PDF por tarea en `Informes/<Mes>/<día>/`, en la carpeta del proyecto. El de la mañana tiene dos páginas; los demás, una. Ningún texto se recorta: si algo no cabe ni con letra pequeña, el informe ocupa una página más |
 
 Todas se cambian en `config/reglas.json`.
 
@@ -49,7 +49,8 @@ Todas se cambian en `config/reglas.json`.
 
 ### Casos de uso
 
-- Saber en una página cómo amanece el mercado y cómo va la cartera.
+- Saber en dos páginas cómo amanece el mercado, cómo va la cartera y qué ha pasado en el mundo.
+- Leer lo más importante de las últimas 24 horas en el mundo (política, economía, tecnología, empresas, España y Europa, energía), tenga o no que ver con la bolsa: sección "El mundo hoy".
 - Fijar el plan del día: qué comprar o vender, con entrada, stop y objetivo.
 - Entender cada decisión: de cada compra, venta y posición que se mantiene, el
   informe dice por qué, qué se espera que pase y qué haría salir. Con hechos de
@@ -79,12 +80,17 @@ Todas se cambian en `config/reglas.json`.
 | 1 | Investigador de sectores | Tendencia y valoración por sector | Dossier y búsqueda web |
 | 1 | Investigador de macro | Entorno, agenda económica y euro/dólar | Dossier y búsqueda web |
 | 1 | Investigador de materias primas | Energía y metales, y a qué valores afectan | Dossier y búsqueda web |
+| 1 | Redactor del mundo (Sonnet 5.5 en todos los niveles) | Entre 12 y 14 noticias de las últimas 24 horas, por temas, con qué ha pasado, por qué importa y la fuente | Búsqueda web; titulares generales de Finnhub como punto de partida |
 | 2 | Estratega | Une los cuatro informes con la cartera, MiroFish y las reglas; escribe el plan y explica cada decisión (`por_que`, `que_esperamos`, `cuando_saldriamos`) | — |
 | 3 | Script | Aprueba o bloquea cada orden y calcula su tamaño | `bot/ordenes.py` |
-| 4 | Script | Compone el PDF | `Informes/<Mes>/<día>/0700-manana.pdf` |
+| 4 | Script | Compone el PDF de dos páginas, con los textos completos | `Informes/<Mes>/<día>/0700-manana.pdf` |
 
 Los investigadores trabajan en paralelo. Los domingos el paso 0 añade lo que
 hacen los grandes inversores con hasta 10 valores (Dataroma).
+
+El redactor del mundo se medió el 24 nov: 8 a 11 turnos de búsqueda, unos 45
+segundos y entre 0,16 y 0,22 $ por informe. Sus noticias se publican tal cual
+en "El mundo hoy" y además llegan al estratega como contexto.
 
 `python3 -m bot.tarea manana --solo-estratega` repite solo los pasos 2 a 4 con
 los datos y los informes de los investigadores ya guardados ese día. Sirve
@@ -98,8 +104,22 @@ para las demás se sigue usando la fecha de Finviz.
 
 ### Niveles de análisis
 
-Antes de empezar, el bot reparte lo que queda del crédito del mes entre los
-días que quedan y elige el nivel más alto que cabe:
+Antes de empezar, el bot mira lo que queda del crédito del mes y los días que
+faltan, y elige el nivel de hoy con tres reglas (`elegir_nivel` en `bot/gasto.py`):
+
+1. Un día sin mercado (sábado, domingo o festivo) va como mucho en nivel medio
+   (`credito_api.nivel_maximo_sin_mercado`).
+2. Un nivel cabe hoy si, después de pagarlo, queda para hacer todas las demás
+   mañanas en el nivel inmediatamente inferior.
+3. El nivel alto se guarda primero para los lunes que quedan, que es cuando se
+   estrena la simulación del domingo: otro día de mercado solo lo usa si además
+   sobra para ponerlo en todos esos lunes.
+
+Simulado el 24 nov con los costes medidos: en lo que queda de noviembre, alto
+todos los días de mercado y medio el festivo y el fin de semana; en un diciembre
+entero, alto el primer día y los cuatro lunes, y medio los otros 26 días.
+
+Los niveles:
 
 | Nivel | Investigadores | Estratega | Coste estimado |
 |---|---|---|---|
@@ -194,7 +214,7 @@ para el reparto y para el informe de MiroFish, y Fable 5.2 para la síntesis fin
 | 2 | MiroFish | Analiza el documento de partida (mercado y reparto) | Haiku |
 | 3 | MiroFish | Construye el grafo de conocimiento | Zep Cloud |
 | 4 | MiroFish | Crea un agente por participante | Haiku |
-| 5 | MiroFish | Debate en una red tipo Reddit, las rondas que quepan en el presupuesto | Haiku |
+| 5 | MiroFish | Debate en una red tipo Twitter (versión ligera), hasta 120 horas simuladas o hasta gastar el 82 % del tope de 9 $ | Haiku |
 | 6 | Script | Encuesta a cada agente: qué hará el mercado, dos sectores a favor, dos en contra y dos valores | Haiku |
 | 7 | MiroFish | Escribe su informe | Sonnet |
 | 8 | Fable | Síntesis: tesis, dirección del mercado, sectores con votos, valores, predicciones y en qué no hay acuerdo | — |
@@ -220,23 +240,42 @@ convierten en agentes: son temas de conversación.
   al tope (`mirofish.tope_usd`). La clave real de Claude no entra en MiroFish.
 - **Imagen propia:** la oficial no existe para procesadores Apple; se construye
   con `docker build -t mirofish-local:latest .` desde `repos/MiroFish`.
-- **Cola de peticiones:** MiroFish lanza hasta 30 peticiones a la vez y el 23 nov
-  falló una de cada cinco. El puente las pone en cola (`mirofish.llamadas_a_la_vez`,
-  8) y reintenta con esperas crecientes: tarda algo más y no pierde llamadas.
-- **Una sola red:** en un Mac de 8 GB la red tipo Twitter original agota la
-  memoria, porque elige lo que ve cada agente con un modelo de más de 1 GB
-  (`twhin-bert`). Hay una variante ligera (`plataforma: twitter` con
-  `recomendador_twitter: random`): el bot monta sobre el contenedor una copia
-  del guion de MiroFish sin ese modelo. Probada el 24 nov con los 42 agentes del
-  domingo: 24 horas simuladas en 3 minutos, 1 GB de memoria, 213 llamadas sin
-  ningún fallo, 0,38 $ con Haiku; publicaron los 42 (67 publicaciones, 120
-  citas, 44 "me gusta"). Cada llamada lee unos 15.000 tokens, frente a los
-  74.000 de la red tipo Reddit. **Aún no sirve para la simulación del domingo:**
-  la encuesta propia y el recuento de lo más valorado solo entienden la red
-  tipo Reddit. Lo guardado de la prueba está en `datos/2026-11-24/prueba-twitter/`.
-- **Rondas según el presupuesto:** cada ronda cuesta más que la anterior porque
-  el hilo crece. El bot calcula cuántas caben en la mitad del tope a partir de
-  lo que costó la simulación anterior.
+- **Sin atropellar a la API:** MiroFish lanza hasta 30 peticiones a la vez y la
+  cuenta admite 2 millones de tokens de entrada por minuto con Haiku; el 23 nov
+  falló una de cada cinco llamadas por eso. El puente las pone en cola
+  (`mirofish.llamadas_a_la_vez`, 8), reparte el envío para no pasar de
+  `mirofish.tokens_por_minuto` (1,5 millones) y, si aun así la API frena,
+  reintenta con esperas crecientes. Tarda algo más y no pierde llamadas. El
+  reparto por minuto está probado sin carga; su primera prueba real es la
+  simulación del 29 nov.
+- **Red tipo Twitter, versión ligera (la que se usa desde el 24 nov):** la
+  original agota la memoria de un Mac de 8 GB porque elige lo que ve cada agente
+  con un modelo de más de 1 GB (`twhin-bert`). Con `recomendador_twitter:
+  random` el bot monta sobre el contenedor una copia del guion de MiroFish sin
+  ese modelo (no toca el repositorio). Ocupa 1 GB. En ella se debate citando
+  publicaciones; la encuesta propia y el recuento de lo más valorado entienden
+  las dos redes. `plataforma: reddit` vuelve a la anterior.
+- **Más rondas por el mismo dinero:** en la red tipo Twitter cada agente lee
+  pocas publicaciones cada vez, así que una ronda cuesta mucho menos que en la
+  de tipo Reddit (33 rondas costaron 2,90 $ el 23 nov). Medido el 24 nov con
+  los mismos 42 agentes: 24 horas simuladas, 0,41 $; 48 horas, 1,31 $ (404
+  llamadas, 7 minutos). El coste crece con el cuadrado de las rondas, porque
+  cada agente relee lo que lleva dicho: unas 85 horas simuladas por 4 $ y unos
+  7 $ para las 120 que planea MiroFish. Desde el 24 nov el tope es de 9 $
+  (`mirofish.tope_usd`) y el 82 % va al debate (`mirofish.parte_del_debate`):
+  unos 7 $, lo justo para la semana simulada completa; si se queda corto, el
+  debate se corta unas rondas antes y la encuesta la hace el bot. Las cifras
+  de 85 y 120 horas son estimaciones a partir de las dos medidas. Lo guardado
+  de las pruebas está en `datos/2026-11-24/prueba-twitter*/`.
+- **Excepciones de un solo día** (`mirofish.solo_el`): cada fecha cambia los
+  ajustes solo ese día y caduca sola. La primera es el **domingo 29 nov de
+  2026**: agentes y fichas con Sonnet 5.5, 48 horas simuladas y tope de 32 $,
+  para aprovechar crédito que caduca el 2 dic. El puente cambia el modelo al
+  vuelo (`modelo_perfiles` para las fichas, `modelo` para el debate). Probado el
+  24 nov con 9 rondas: 65 llamadas sin fallos y 1,51 $, unas 16 veces lo que
+  cuesta Haiku; de ahí salen unos 21–26 $ para las 48 horas. La cuenta admite
+  el mismo ritmo para Sonnet que para Haiku (2 millones de tokens de entrada
+  por minuto). El presupuesto del mes aparta ese tope para ese domingo.
 - **Encuesta propia:** MiroFish solo deja entrevistar a los agentes si el debate
   termina por sí solo, así que la encuesta la hace el bot dándole a cada agente
   su personalidad y lo que escribió.
@@ -280,6 +319,20 @@ Cómo se reparte el crédito (`config/reglas.json`, bloque `credito_api`):
 - Se aparta lo que costarán la apertura y el cierre de los días de mercado que quedan.
 - Lo demás se divide entre los días que quedan del mes: es el presupuesto de las 7:00 de hoy.
 - Cada llamada lleva además su propio tope; si lo alcanza, se corta.
+- También se aparta el tope de MiroFish (`mirofish.tope_usd`) por cada domingo que queda.
+
+**El crédito no da para todo al máximo.** Con lo medido hasta el 24 nov (una
+mañana en nivel alto, 3,15 $; en nivel medio, 1,21 $; MiroFish, hasta 9 $ por
+domingo desde ese día), un mes entero de 31 mañanas, 22 días de mercado y 4
+domingos deja unos 47 $ para las mañanas: 1,5 $ al día de media. Caben unas 5
+mañanas en nivel alto y el resto en medio; con MiroFish a 6 $ eran unas 11.
+Todas las mañanas en alto costarían 98 $ ellas solas. El bot elige solo el
+nivel de cada día (ver "Niveles de análisis"); el usuario decidió el 24 nov dar
+prioridad a una simulación semanal más larga y dejar los días sin mercado en
+nivel medio.
+
+El crédito no se acumula de un mes a otro. En el ciclo que acaba el 2 dic
+sobrarán unos 50 $, porque el bot empezó a gastar el día 23.
 
 ## Sin construir o sin probar
 

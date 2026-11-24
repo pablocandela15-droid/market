@@ -45,6 +45,11 @@ ESQ_INVESTIGADOR = _obj(
     hallazgos=_lista(_obj(titulo=S, detalle=S, tickers=_lista(S), sesgo=_op("positivo", "negativo", "neutro"), fuente=S)),
     candidatos=_lista(_obj(ticker=S, motivo=S, riesgos=S)),
     alertas=_lista(S))
+TEMAS_MUNDO = ["Política y geopolítica", "Economía", "Tecnología", "Empresas y mercados", "España y Europa",
+               "Energía y clima", "Ciencia y salud", "Otros"]
+ESQ_MUNDO = _obj(
+    resumen=S,
+    noticias=_lista(_obj(categoria=_op(*TEMAS_MUNDO), titular=S, que_ha_pasado=S, por_que_importa=S, fuente=S)))
 ESQ_ESTRATEGA = _obj(
     panorama=S, tono=_op("riesgo", "neutral", "defensivo"),
     prioritario=_obj(ticker=S, lectura=S, niveles=S, accion=_op("comprar", "mantener", "esperar", "vender")),
@@ -145,7 +150,7 @@ def _chips(d, costes=None, nivel=None):
 def _pie(avisos):
     extra = ""
     if avisos:
-        extra = "Avisos de datos: " + "; ".join(inf.corta(x, 95) for x in avisos[:4]) + (" …" if len(avisos) > 4 else "") + "<br>"
+        extra = "Avisos de datos: " + "; ".join(inf.e(x) for x in avisos) + "<br>"
     return extra + inf.PIE
 
 
@@ -194,21 +199,38 @@ def _datos_investigador(papel, d):
     return comun
 
 
+def _mundo(d, nivel=""):
+    """El redactor de noticias del mundo: busca en la web lo más importante del día, de cualquier tema."""
+    r = reglas()
+    ahora = ahora_madrid()
+    datos = {"ahora_en_madrid": ahora.strftime("%Y-%m-%d %H:%M") + " (" + DIAS[ahora.weekday()] + ")",
+             "titulares_de_agencia": d.get("titulares_de_agencia") or [],
+             "mercados_ayer": {k: {"ultimo": v.get("precio"), "dia_pct": v.get("var_1d")}
+                               for k, v in (d.get("indices") or {}).items() if isinstance(v, dict)}}
+    return modelo.preguntar("manana", "mundo", r["modelos"].get("mundo", r["modelos"]["investigador_medio"]), datos,
+                            ESQ_MUNDO, nivel=nivel, web=True,
+                            tope_usd=r["credito_api"]["tope_por_llamada_usd"].get("mundo", 0.5), esfuerzo="medium",
+                            espera=720, carpeta=carpeta_del_dia("datos"))
+
+
 def _investigar(d, nivel, a):
     r = reglas()
     papeles = ["investigador-noticias", "investigador-sectores", "investigador-macro", "investigador-materias"]
     if nivel == "bajo":
         papeles = papeles[:2]
+    papeles.append("mundo")       # las noticias del mundo van siempre que haya modelo
     fable = nivel == "alto"
     mod = r["modelos"]["investigador_alto" if fable else "investigador_medio"]
     tope = r["credito_api"]["tope_por_llamada_usd"]["investigador_fable" if fable else "investigador_sonnet"]
 
     def uno(papel):
+        if papel == "mundo":
+            return papel, _mundo(d, nivel)
         return papel, modelo.preguntar("manana", papel, mod, _datos_investigador(papel, d), ESQ_INVESTIGADOR,
                                        nivel=nivel, web=True, tope_usd=tope, esfuerzo="medium", espera=720,
                                        carpeta=carpeta_del_dia("datos"))
     informes, costes = {}, []
-    with ThreadPoolExecutor(max_workers=4) as grupo:
+    with ThreadPoolExecutor(max_workers=5) as grupo:
         for papel, (resp, info) in grupo.map(uno, papeles):
             costes.append(info)
             if resp:
@@ -321,6 +343,28 @@ def _que_hacemos(d, plan):
     return "<h2>Qué hacemos hoy y por qué</h2>" + "".join(partes)
 
 
+def _el_mundo_hoy(m):
+    """La sección de noticias del mundo, por temas y a dos columnas. Vacía si no hubo redactor."""
+    noticias = [n for n in (m or {}).get("noticias") or [] if n.get("titular")]
+    if not noticias:
+        return ""
+    orden = {t: i for i, t in enumerate(TEMAS_MUNDO)}
+    noticias.sort(key=lambda n: orden.get(n.get("categoria"), len(orden)))       # estable: respeta el orden dentro del tema
+    partes, anterior = [], None
+    for n in noticias:
+        tema = n.get("categoria", "")
+        # El nombre del tema va una vez, pegado a su primera noticia para que no quede suelto al pie de una columna.
+        rotulo = "<span class='cat'>%s</span><br>" % inf.e(tema) if tema != anterior else ""
+        anterior = tema
+        partes.append("<p>%s<b>%s</b> %s <i>Por qué importa:</i> %s <span class='gris'>(%s)</span></p>" % (
+            rotulo, inf.e(n["titular"].rstrip(".") + "."), inf.e(n.get("que_ha_pasado", "")),
+            inf.e(n.get("por_que_importa", "")), inf.e(n.get("fuente", ""))))
+    cabecera = "<h2>El mundo hoy</h2>"
+    if m.get("resumen"):
+        cabecera += "<p><b>%s</b></p>" % inf.e(m["resumen"])
+    return cabecera + "<div class='columnas'>%s</div>" % "".join(partes)
+
+
 def _pdf_manana(d, plan, nivel, costes, hechos, avisos):
     c, ind, u, val = d["cartera"], d["indices"], d["universo"], d["valoracion"]
     cuerpo = [inf.bloque_cartera(c)]
@@ -335,8 +379,8 @@ def _pdf_manana(d, plan, nivel, costes, hechos, avisos):
     cuerpo.append(_que_hacemos(d, plan))
     mf = d.get("mirofish")
     if mf:
-        favor = [x["sector"] for x in mf.get("sectores", []) if x["sesgo"] == "positivo"][:4]
-        contra = [x["sector"] for x in mf.get("sectores", []) if x["sesgo"] == "negativo"][:4]
+        favor = [x["sector"] for x in mf.get("sectores", []) if x["sesgo"] == "positivo"]
+        contra = [x["sector"] for x in mf.get("sectores", []) if x["sesgo"] == "negativo"]
         cuerpo.append("<p class='gris'><b>Guía de la semana</b> (simulación del %s): postura %s. Sectores preferidos: %s. "
                       "A evitar: %s.</p>" % (inf.e(mf["fecha"][8:] + "/" + mf["fecha"][5:7]), inf.e(_postura(mf["tono"])),
                                              inf.e(", ".join(favor) or "ninguno"), inf.e(", ".join(contra) or "ninguno")))
@@ -359,7 +403,7 @@ def _pdf_manana(d, plan, nivel, costes, hechos, avisos):
     vig = plan.get("vigilados") or [{"ticker": t, "por_que": ", ".join(u[t]["configuraciones"])} for t in d.get("candidatos", [])[:6]]
     medias = d.get("media_sector") or {}
     filas = []
-    for v in vig[:6]:
+    for v in vig:
         t = v["ticker"].upper()
         f, x = u.get(t), val.get(t, {})
         if not f:
@@ -367,18 +411,19 @@ def _pdf_manana(d, plan, nivel, costes, hechos, avisos):
         m = medias.get(f["sector"]) or {}
         filas.append([inf.e(t), inf.sector(f["sector"]), inf.num(f["precio"]), inf.pct(f["var_1d"]), inf.pct(f["var_1m"]),
                       inf.num(f["rsi14"], 0), inf.num(x.get("per"), 1), inf.num(x.get("per_futuro"), 1),
-                      inf.num(x.get("peg"), 2), inf.num(m.get("per_futuro"), 1), inf.corta(v.get("por_que", ""), 70)])
+                      inf.num(x.get("peg"), 2), inf.num(m.get("per_futuro"), 1), inf.e(v.get("por_que", ""))])
     cuerpo.append("<h2>Valores vigilados</h2>" + inf.tabla(
         [("Valor", 0), ("Sector", 0), ("Precio", 1), ("Día", 1), ("Mes", 1), ("RSI", 1), ("P/E", 1), ("P/E fut.", 1),
          ("PEG", 1), ("P/E fut. sector", 1), ("Por qué", 0)], filas, "Sin valores vigilados hoy."))
-    noticias = ["%s — %s" % (n["titular"], n["impacto"]) for n in plan.get("noticias_clave", [])[:3]] or \
+    noticias = ["%s — %s" % (n["titular"], n["impacto"]) for n in plan.get("noticias_clave", [])] or \
                ["%s: %s" % (n["ticker"], n["titular"]) for n in d["noticias"]["titulares"][:4]]
-    cuerpo.append('<div class="dos"><div><h2>Noticias que importan</h2>%s</div><div><h2>Agenda y riesgos</h2>%s</div></div>' % (
+    cuerpo.append('<div class="dos"><div><h2>Noticias que mueven la cartera</h2>%s</div><div><h2>Agenda y riesgos</h2>%s</div></div>' % (
         inf.lista(noticias, "Sin titulares."),
-        inf.lista((plan.get("agenda") or [])[:4] + ["Riesgo: " + x for x in (plan.get("riesgos") or [])[:3]],
+        inf.lista((plan.get("agenda") or []) + ["Riesgo: " + x for x in (plan.get("riesgos") or [])],
                   "Sin agenda (requiere el análisis del modelo).")))
+    cuerpo.append(_el_mundo_hoy(plan.get("noticias_del_mundo")))
     return inf.componer("Informe de la mañana", _fecha_larga(ahora_madrid()), _chips(d, costes, nivel["nivel"]),
-                        "".join(cuerpo), _pie(avisos), carpeta_informes() / "0700-manana.pdf")
+                        "".join(cuerpo), _pie(avisos), carpeta_informes() / "0700-manana.pdf", paginas_max=2)
 
 
 def manana(a):
@@ -436,6 +481,7 @@ def manana(a):
             if _subir_objetivo(c, t, p.get("nuevo_objetivo"), precios.get(t), api, avisos):
                 hechos.append({"hora": ahora_madrid().strftime("%H:%M"), "ticker": t, "accion": "objetivo subido", "cantidad": 0,
                                "precio": p["nuevo_objetivo"], "importe_usd": 0, "motivo": p.get("comentario", "")})
+    plan["noticias_del_mundo"] = (informes or {}).get("mundo")
     plan.update({"fecha": ahora_madrid().date().isoformat(), "nivel": nivel["nivel"],
                  "coste_usd": round(sum(i.get("coste_usd", 0) for i in costes), 4), "llamadas": costes})
     carpeta = carpeta_del_dia("datos")
@@ -559,7 +605,7 @@ def _cuenta_del_dia(res, ops, velas, hoy):
                       inf.dinero(p["valor_usd"] - puesto, "$", True)])
     for o in ops:
         if o["accion"] == "venta":
-            filas.append(["Vendida hoy: %s" % inf.e(o["ticker"]), inf.corta(o.get("motivo", ""), 40), *usd_eur(o["importe_usd"]),
+            filas.append(["Vendida hoy: %s" % inf.e(o["ticker"]), inf.e(o.get("motivo", "")), *usd_eur(o["importe_usd"]),
                           "%s <small class='gris'>toda la operación</small>" % inf.dinero(o.get("resultado_usd"), "$", True)])
     filas.append(["En caja, sin invertir", "", *usd_eur(res["caja_usd"]), ""])
     filas.append(["<b>Terminas el día con</b>", "", *("<b>%s</b>" % x for x in usd_eur(res["valor_usd"])),
