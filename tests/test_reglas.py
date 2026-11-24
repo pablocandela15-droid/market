@@ -12,6 +12,9 @@ os.environ["BOT_PRUEBA"] = "1"
 
 from bot import cartera, ordenes  # noqa: E402
 
+# Universo fijo para las pruebas: así no dependen de descargar la lista del S&P 500.
+ordenes.valores_del_universo = lambda: {"NVDA": "Tecnología", "JPM": "Finanzas"}
+
 REGLAS = {
     "riesgo": {"riesgo_por_operacion_pct": 1.0, "max_posiciones": 5, "max_posicion_pct": 25, "colchon_caja_pct": 5,
                "min_orden_usd": 5, "min_recompensa_riesgo": 1.5, "stop_min_pct": 2, "stop_max_pct": 15,
@@ -83,6 +86,15 @@ class Validacion(unittest.TestCase):
     def test_resultados_inminentes(self):
         manana = (dt.date.today() + dt.timedelta(days=1)).strftime("%b %d") + " AMC"
         self.assertEqual(self.v(orden(), val=dict(BARATA, resultados=manana))[0], "BLOQUEADA")
+
+    def test_resultados_segun_el_calendario(self):
+        hoy = dt.date.today()
+        cerca = (hoy + dt.timedelta(days=1)).isoformat()
+        lejos = (hoy + dt.timedelta(days=30)).isoformat()
+        ayer = (hoy - dt.timedelta(days=1)).isoformat()
+        self.assertEqual(self.v(orden(), val=dict(BARATA, fecha_de_resultados=cerca))[0], "BLOQUEADA")
+        self.assertEqual(self.v(orden(), val=dict(BARATA, fecha_de_resultados=lejos))[0], "APROBADA")
+        self.assertEqual(self.v(orden(), val=dict(BARATA, fecha_de_resultados=ayer))[0], "APROBADA")
 
     def test_apertura_precio_escapado_o_en_stop(self):
         self.assertEqual(self.v(orden(), precio=104.0)[0], "BLOQUEADA")

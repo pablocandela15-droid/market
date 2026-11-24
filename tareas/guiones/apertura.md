@@ -13,6 +13,8 @@ Para cada orden del plan con veredicto APROBADA:
 
 El código ya descarta por su cuenta las órdenes cuyo precio se ha escapado más de un 3 % o ha tocado el stop: no hace falta que lo vigiles. Ante la duda, descarta: mañana habrá otra oportunidad y no operar no cuesta nada.
 
+Si `mirofish` trae datos, es la simulación semanal que guía la cartera: el plan de la mañana ya la ha tenido en cuenta. Descarta una orden si lo ocurrido desde las 7:00 contradice con claridad lo que la simulación esperaba para ese sector.
+
 Para las posiciones abiertas puedes proponer subir el stop (nunca bajarlo) si el valor ha avanzado, o vender si una noticia ha roto la tesis.
 
 ## Qué devuelves

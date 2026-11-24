@@ -85,7 +85,13 @@ Cómo lo aplica el bot:
 
 ## 4. Universo y vigilancia
 
-- Acciones de EE. UU. grandes, medianas y pequeñas.
-- Sectores: energías renovables, nuclear, tecnología y defensa.
+- Las 500 empresas del S&P 500, en sus once sectores, más los valores de cuatro
+  temas que no están en el índice (inteligencia artificial y chips, renovables,
+  nuclear y uranio, defensa). En total, unos 530 valores.
+- No hay sectores favoritos: cada mañana se clasifican por fuerza y la
+  simulación semanal de MiroFish indica cuáles prefiere.
 - NVIDIA en vigilancia prioritaria, con bloque propio en el informe de las 7:00.
-- Divisas y materias primas se analizan como contexto; no se compran.
+- Mercados de fuera, divisas y materias primas se analizan como contexto; no se compran.
+- La lista del índice se descarga de Wikipedia y se guarda 30 días.
+
+Qué más se podría conectar, y qué hace falta para ello, está en [terminal.md](terminal.md).

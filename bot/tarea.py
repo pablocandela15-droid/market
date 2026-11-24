@@ -49,8 +49,9 @@ ESQ_ESTRATEGA = _obj(
     panorama=S, tono=_op("riesgo", "neutral", "defensivo"),
     prioritario=_obj(ticker=S, lectura=S, niveles=S, accion=_op("comprar", "mantener", "esperar", "vender")),
     ordenes=_lista(_obj(ticker=S, accion=_op("comprar", "vender"), entrada=N, stop=N, objetivo=N, motivo=S,
-                        conviccion=_op("alta", "media", "baja"))),
-    posiciones=_lista(_obj(ticker=S, decision=_op("mantener", "vender"), nuevo_stop=N, comentario=S)),
+                        por_que=S, que_esperamos=S, cuando_saldriamos=S, conviccion=_op("alta", "media", "baja"))),
+    posiciones=_lista(_obj(ticker=S, decision=_op("mantener", "vender"), nuevo_stop=N, nuevo_objetivo=N, comentario=S,
+                           por_que=S, que_esperamos=S, cuando_saldriamos=S)),
     vigilados=_lista(_obj(ticker=S, por_que=S)),
     noticias_clave=_lista(_obj(titular=S, impacto=S)),
     agenda=_lista(S), riesgos=_lista(S))
@@ -117,6 +118,20 @@ def _subir_stop(c, ticker, nuevo, precio, api, avisos):
     return True
 
 
+def _subir_objetivo(c, ticker, nuevo, precio, api, avisos):
+    """Aleja el objetivo de una posición para dejarla correr. Solo hacia arriba."""
+    p = c["posiciones"].get(ticker)
+    if not p or not nuevo or nuevo <= p["objetivo"] or (precio and nuevo <= precio):
+        return False
+    p["objetivo"] = round(float(nuevo), 2)
+    if api and p.get("stop_en_broker") and p.get("orden_id"):
+        try:
+            api.mover_objetivo(p["orden_id"], p["objetivo"])
+        except ErrorFuente as e:
+            avisos.append("Alpaca no movió el objetivo de %s: %s" % (ticker, e))
+    return True
+
+
 def _chips(d, costes=None, nivel=None):
     cr = d["credito_api"]
     coste = sum(i.get("coste_usd", 0) for i in costes or [])
@@ -130,7 +145,7 @@ def _chips(d, costes=None, nivel=None):
 def _pie(avisos):
     extra = ""
     if avisos:
-        extra = "Avisos de datos: " + inf.e("; ".join(avisos[:4]))[:420] + (" …" if len(avisos) > 4 else "") + "<br>"
+        extra = "Avisos de datos: " + "; ".join(inf.corta(x, 95) for x in avisos[:4]) + (" …" if len(avisos) > 4 else "") + "<br>"
     return extra + inf.PIE
 
 
@@ -150,23 +165,32 @@ def _fila_corta(f):
                                   "minimo_10d", "maximo_20d")}
 
 
+def _detalle(d):
+    """Filas completas de los valores que se miran hoy a fondo: candidatos, cartera y prioritarios."""
+    u = d["universo"]
+    interes = list(dict.fromkeys(d.get("candidatos", []) + [p["ticker"] for p in d["cartera"]["posiciones"]] + d["prioritarios"]))
+    return {t: dict(_fila_corta(u[t]), tema=u[t].get("tema"), empresa=u[t].get("empresa")) for t in interes if t in u}
+
+
 def _datos_investigador(papel, d):
     comun = {"fecha": d["generado"], "nota_datos": d["nota_datos"], "mercado_hoy": d["mercado_hoy"],
              "prioritarios": d["prioritarios"],
-             "en_cartera": [p["ticker"] for p in d["cartera"]["posiciones"]], "candidatos": d.get("candidatos", [])}
-    u = d["universo"]
+             "en_cartera": [p["ticker"] for p in d["cartera"]["posiciones"]], "candidatos": d.get("candidatos", []),
+             "fuerza_de_sectores": d.get("fuerza_de_sectores")}
     if papel == "investigador-sectores":
-        comun.update({"sectores": d.get("sectores"), "universo": {t: _fila_corta(f) for t, f in u.items()},
-                      "valoracion": d["valoracion"], "media_sector": d.get("media_sector")})
+        comun.update({"destacados_por_sector": d.get("destacados_por_sector"), "fondos_de_tema": d.get("fondos_de_tema"),
+                      "valores_en_detalle": _detalle(d), "valoracion": d["valoracion"], "media_sector": d.get("media_sector"),
+                      "sorpresas_de_resultados": d.get("sorpresas_de_resultados"), "analistas": d.get("analistas"),
+                      "directivos": d.get("directivos")})
     elif papel == "investigador-noticias":
-        interes = set(comun["candidatos"]) | set(comun["en_cartera"]) | set(comun["prioritarios"])
-        comun.update({"noticias": d["noticias"], "universo": {t: _fila_corta(u[t]) for t in interes if t in u}})
+        comun.update({"noticias": d["noticias"], "valores_en_detalle": _detalle(d)})
     elif papel == "investigador-macro":
         comun.update({"indices": d["indices"], "macro": d.get("macro")})
     else:
-        comun.update({"materias_primas": d.get("materias_primas"), "sectores": d.get("sectores"),
-                      "universo": {t: {k: f.get(k) for k in ("sector", "var_1d", "var_5d", "var_1m")}
-                                   for t, f in u.items() if f["sector"] != "tecnologia"}})
+        comun.update({"materias_primas": d.get("materias_primas"), "fondos_de_tema": d.get("fondos_de_tema"),
+                      "destacados_por_sector": {s: v for s, v in (d.get("destacados_por_sector") or {}).items()
+                                                if s in ("Energía", "Materiales", "Servicios públicos", "Industria",
+                                                         "Renovables", "Nuclear y uranio", "Defensa")}})
     return comun
 
 
@@ -194,11 +218,13 @@ def _investigar(d, nivel, a):
 
 def _estratega(d, informes, nivel, a):
     r = reglas()
-    datos = {k: d.get(k) for k in ("generado", "nota_datos", "mercado_hoy", "indices", "materias_primas", "sectores", "macro",
+    datos = {k: d.get(k) for k in ("generado", "nota_datos", "mercado_hoy", "mirofish", "indices", "materias_primas",
+                                   "fuerza_de_sectores", "destacados_por_sector", "fondos_de_tema", "macro",
                                    "media_sector", "candidatos", "prioritarios", "valoracion", "reglas", "cartera",
                                    "marcador", "operaciones_recientes", "grandes_inversores", "avisos_de_ayer",
-                                   "lecciones_recientes")}
-    datos["universo"] = {t: _fila_corta(f) for t, f in d["universo"].items()}
+                                   "lecciones_recientes", "sorpresas_de_resultados", "analistas", "directivos")}
+    datos["valores_en_detalle"] = _detalle(d)
+    datos["universo_comprable"] = "Las %d empresas del S&P 500 y los valores de los temas." % len(d["universo"])
     datos["titulares"] = [{"ticker": n["ticker"], "titular": n["titular"], "hora": n["hora"]}
                           for n in d["noticias"]["titulares"][:25]]
     datos["investigadores"] = informes
@@ -227,6 +253,74 @@ def _poner_veredictos(plan, d, avisos):
             res["posiciones"].append({"ticker": t})
 
 
+def _postura(tono):
+    """El tono del plan, dicho como postura de la cartera."""
+    return {"defensivo": "defensiva", "riesgo": "ofensiva", "neutral": "neutral"}.get((tono or "").lower(), tono or "sin análisis")
+
+
+def _que_hacemos(d, plan):
+    """Lo que se hace hoy con cada valor y por qué, en claro: compras, ventas, lo que se mantiene y el valor prioritario."""
+    c, u = d["cartera"], d["universo"]
+    pos = {p["ticker"]: p for p in c["posiciones"]}
+    decisiones = {x["ticker"].upper(): x for x in plan.get("posiciones", [])}
+
+    def parrafo(titulo, detalle, x, extra=""):
+        lineas = ["<b>%s</b> <span class='gris'>%s</span>" % (titulo, detalle)]
+        # Si la frase ya empieza por "Esperamos que…" o "Saldríamos si…", se resalta ese arranque
+        # en vez de repetirlo como etiqueta.
+        for etiqueta, clave, arranque in (("Por qué", "por_que", None), ("Qué esperamos", "que_esperamos", "Esperamos"),
+                                          ("Saldríamos si", "cuando_saldriamos", "Saldríamos")):
+            texto = (x.get(clave) or "").strip()
+            if not texto:
+                continue
+            if arranque and texto.startswith(arranque + " "):
+                lineas.append("<b>%s</b>%s" % (arranque, inf.e(texto[len(arranque):])))
+            else:
+                lineas.append("<b>%s:</b> %s" % (etiqueta, inf.e(texto)))
+        return "<p>%s%s</p>" % ("<br>".join(lineas), extra)
+    partes = []
+    for o in plan["ordenes"]:
+        t = o["ticker"]
+        if o.get("accion") == "vender":
+            p = pos.get(t, {})
+            x = dict(decisiones.get(t, {}), **{k: v for k, v in o.items() if k in ("por_que", "que_esperamos", "cuando_saldriamos") and v})
+            x.setdefault("por_que", o.get("motivo") or x.get("comentario"))
+            partes.append(parrafo("%s · se vende" % inf.e(t), "comprada a %s $ · hoy %s $ (%s, %s)" % (
+                inf.num(p.get("entrada")), inf.num(p.get("precio")), inf.pct(p.get("resultado_pct")),
+                inf.dinero(p.get("resultado_usd"), "$", True)), x))
+        elif o.get("veredicto") == "APROBADA":
+            x = dict(o)
+            x.setdefault("por_que", o.get("motivo"))
+            n = o.get("cantidad") or 0
+            partes.append(parrafo("%s · se compra" % inf.e(t), "%s · %s acciones, unos %s · entrada %s $ · stop %s $ · objetivo %s $%s" % (
+                inf.e((u.get(t) or {}).get("empresa") or (u.get(t) or {}).get("sector") or ""),
+                inf.num(n, 0 if n == int(n) else 4), inf.dinero(n * float(o["entrada"])), inf.num(o["entrada"]),
+                inf.num(o["stop"]), inf.num(o["objetivo"]),
+                (" · " + inf.e("; ".join(o["motivos"]))) if o.get("motivos") else ""), x))
+        else:
+            partes.append("<p><b>%s · no se compra:</b> %s</p>" % (inf.e(t), inf.e("; ".join(o.get("motivos") or []))))
+    vendidas = {o["ticker"] for o in plan["ordenes"] if o.get("accion") == "vender"}
+    for t, p in pos.items():
+        if t in vendidas:
+            continue
+        x = dict(decisiones.get(t) or {})
+        if not x.get("por_que"):
+            x["por_que"] = x.get("comentario") or p.get("motivo_de_compra")
+        partes.append(parrafo("%s · se mantiene" % inf.e(t), "comprada el %s a %s $ · hoy %s $ (%s, %s) · stop %s $ · objetivo %s $" % (
+            inf.e(p["fecha_entrada"][8:] + "/" + p["fecha_entrada"][5:7]), inf.num(p["entrada"]), inf.num(p["precio"]),
+            inf.pct(p["resultado_pct"]), inf.dinero(p["resultado_usd"], "$", True), inf.num(p["stop"]), inf.num(p["objetivo"])), x))
+    pri = plan.get("prioritario") or {}
+    t = (pri.get("ticker") or "").upper()
+    if t and t not in pos and not any(o["ticker"] == t for o in plan["ordenes"]) and pri.get("lectura"):
+        f = u.get(t) or {}
+        partes.append("<p><b>%s · %s</b> <span class='gris'>en vigilancia · %s $, %s en el día y %s en el mes</span><br>%s%s</p>" % (
+            inf.e(t), inf.e(pri.get("accion", "esperar")), inf.num(f.get("precio")), inf.pct(f.get("var_1d")), inf.pct(f.get("var_1m")),
+            inf.e(pri["lectura"]), (" <span class='gris'>Niveles: %s</span>" % inf.e(pri["niveles"])) if pri.get("niveles") else ""))
+    if not partes:
+        return ""
+    return "<h2>Qué hacemos hoy y por qué</h2>" + "".join(partes)
+
+
 def _pdf_manana(d, plan, nivel, costes, hechos, avisos):
     c, ind, u, val = d["cartera"], d["indices"], d["universo"], d["valoracion"]
     cuerpo = [inf.bloque_cartera(c)]
@@ -237,27 +331,35 @@ def _pdf_manana(d, plan, nivel, costes, hechos, avisos):
             inf.e(d["mercado_hoy"]["motivo_cierre"]), inf.e(d["mercado_hoy"]["proxima_sesion"])))
     elif d["mercado_hoy"].get("cierre_anticipado"):
         cuerpo.append("<p><b>Sesión corta:</b> hoy la bolsa cierra a las %s.</p>" % d["mercado_hoy"]["cierra_madrid"])
-    cuerpo.append("<h2>Panorama · postura: %s</h2><p>%s</p>" % (inf.e(plan.get("tono", "sin análisis")), inf.e(plan["panorama"])))
-    otros = []
-    for sector, fondos in (d.get("sectores") or {}).items():
-        for nombre, q in fondos.items():
-            otros.append(["%s <small class='gris'>%s</small>" % (inf.e(nombre), inf.sector(sector)), inf.pct(q["var_1d"]),
-                          inf.pct(q["var_5d"]), inf.pct(q["var_1m"])])
-    for nombre, q in (d.get("materias_primas") or {}).items():
-        otros.append([inf.e(nombre), inf.pct(q["var_1d"]), inf.pct(q["var_5d"]), inf.pct(q["var_1m"])])
-    cuerpo.append('<div class="dos"><div><h2>Mercado</h2>%s</div><div><h2>Sectores y materias primas</h2>%s</div></div>' % (
-        inf.bloque_indices(ind, ["S&P 500", "Nasdaq 100", "Russell 2000", "VIX", "Bono 10 años (%)", "Euro/dólar",
-                                 "Futuro S&P 500", "Futuro Nasdaq", "Euro Stoxx 50", "Nikkei 225"]),
-        inf.tabla([("", 0), ("Día", 1), ("5 días", 1), ("Mes", 1)], otros[:14])))
-    if c["posiciones"] or hechos:
-        cuerpo.append("<h2>Posiciones abiertas</h2>" + inf.bloque_posiciones(c))
+    cuerpo.append("<h2>Panorama · postura: %s</h2><p>%s</p>" % (inf.e(_postura(plan.get("tono"))), inf.e(plan["panorama"])))
+    cuerpo.append(_que_hacemos(d, plan))
+    mf = d.get("mirofish")
+    if mf:
+        favor = [x["sector"] for x in mf.get("sectores", []) if x["sesgo"] == "positivo"][:4]
+        contra = [x["sector"] for x in mf.get("sectores", []) if x["sesgo"] == "negativo"][:4]
+        cuerpo.append("<p class='gris'><b>Guía de la semana</b> (simulación del %s): postura %s. Sectores preferidos: %s. "
+                      "A evitar: %s.</p>" % (inf.e(mf["fecha"][8:] + "/" + mf["fecha"][5:7]), inf.e(_postura(mf["tono"])),
+                                             inf.e(", ".join(favor) or "ninguno"), inf.e(", ".join(contra) or "ninguno")))
+    sectores = []
+    for x in d.get("fuerza_de_sectores") or []:
+        corto = inf.sector(x["nombre"]).replace(" ", "&nbsp;")
+        nombre = ("%d.&nbsp;%s" % (x["puesto"], corto)) if x["tipo"] == "sector" else "<span class='gris'>tema&nbsp;·</span>&nbsp;%s" % corto
+        sectores.append([nombre, inf.pct(x["dia_pct"]), inf.pct(x["semana_pct"]), inf.pct(x["mes_pct"]),
+                         inf.pct(x["tres_meses_pct"]), "%s&nbsp;%%" % inf.num(x["sobre_media50_pct_de_valores"], 0)])
+    todo = dict(ind)
+    todo.update(d.get("materias_primas") or {})
+    cuerpo.append('<div class="dos"><div><h2>Mercados</h2>%s</div><div><h2>Sectores, del más fuerte al más débil</h2>%s</div></div>' % (
+        inf.bloque_indices(todo, ["S&P 500", "Nasdaq 100", "Russell 2000", "VIX", "Bono 10 años (%)", "Euro/dólar",
+                                  "Euro Stoxx 50", "IBEX 35", "Nikkei 225", "Emergentes (EEM)", "Petróleo WTI", "Oro",
+                                  "Cobre", "Bitcoin"][:15]),
+        inf.tabla([("", 0), ("Día", 1), ("Sem.", 1), ("Mes", 1), ("3 m.", 1), ("Sobre media 50", 1)], sectores,
+                  "Sin datos de sectores.")))
     if hechos:
         cuerpo.append("<h2>Movimientos desde el último informe</h2>" + inf.bloque_operaciones(hechos))
-    cuerpo.append("<h2>Plan del día (se ejecuta en la apertura)</h2>" + inf.bloque_plan(plan["ordenes"]))
-    vig = plan.get("vigilados") or [{"ticker": t, "por_que": ", ".join(u[t]["configuraciones"])} for t in d.get("candidatos", [])[:8]]
+    vig = plan.get("vigilados") or [{"ticker": t, "por_que": ", ".join(u[t]["configuraciones"])} for t in d.get("candidatos", [])[:6]]
     medias = d.get("media_sector") or {}
     filas = []
-    for v in vig[:8]:
+    for v in vig[:6]:
         t = v["ticker"].upper()
         f, x = u.get(t), val.get(t, {})
         if not f:
@@ -269,18 +371,6 @@ def _pdf_manana(d, plan, nivel, costes, hechos, avisos):
     cuerpo.append("<h2>Valores vigilados</h2>" + inf.tabla(
         [("Valor", 0), ("Sector", 0), ("Precio", 1), ("Día", 1), ("Mes", 1), ("RSI", 1), ("P/E", 1), ("P/E fut.", 1),
          ("PEG", 1), ("P/E fut. sector", 1), ("Por qué", 0)], filas, "Sin valores vigilados hoy."))
-    pri = plan.get("prioritario") or {}
-    t = (pri.get("ticker") or (d["prioritarios"] or [""])[0]).upper()
-    if t in u:
-        f, x = u[t], val.get(t, {})
-        cuerpo.append("<h2>%s en detalle</h2><p>Precio %s $ (%s en el día, %s en el mes, %s desde máximos del año) · RSI %s · "
-                      "P/E %s · P/E futuro %s · PEG %s · resultados: %s.</p><p>%s%s%s</p>" % (
-                          inf.e(t), inf.num(f["precio"]), inf.pct(f["var_1d"]), inf.pct(f["var_1m"]),
-                          inf.pct(f["bajo_maximo_anual_pct"]), inf.num(f["rsi14"], 0), inf.num(x.get("per"), 1),
-                          inf.num(x.get("per_futuro"), 1), inf.num(x.get("peg"), 2), inf.e(x.get("resultados") or "sin fecha"),
-                          ("<b>%s.</b> " % inf.e(pri["accion"]).capitalize()) if pri.get("accion") else "",
-                          inf.e(pri.get("lectura", "")),
-                          (" <span class='gris'>Niveles: %s</span>" % inf.e(pri["niveles"])) if pri.get("niveles") else ""))
     noticias = ["%s — %s" % (n["titular"], n["impacto"]) for n in plan.get("noticias_clave", [])[:3]] or \
                ["%s: %s" % (n["ticker"], n["titular"]) for n in d["noticias"]["titulares"][:4]]
     cuerpo.append('<div class="dos"><div><h2>Noticias que importan</h2>%s</div><div><h2>Agenda y riesgos</h2>%s</div></div>' % (
@@ -292,12 +382,23 @@ def _pdf_manana(d, plan, nivel, costes, hechos, avisos):
 
 
 def manana(a):
-    d, velas, c = dossier.construir("manana")
-    avisos = d["avisos_de_datos"]
-    api = _api(avisos)
-    hechos = _vigilar(c, velas, api, avisos)
-    if hechos:
-        d["cartera"] = _resumen(c, d)
+    previos = None
+    if getattr(a, "solo_estratega", False):       # rehace la decisión y el informe con los datos y la investigación de hoy
+        d = leer_json(carpeta_del_dia("datos") / "dossier-manana.json")
+        if not d:
+            raise ErrorFuente("no hay datos de la mañana de hoy: lanza antes la tarea completa")
+        previos = leer_json(carpeta_del_dia("datos") / "investigadores.json", {})
+        velas, c = {}, cartera.cargar()
+        avisos = d["avisos_de_datos"]
+        api, hechos = _api(avisos), []
+        d["cartera"] = dict(_resumen(c, d), aportacion_hoy=None)
+    else:
+        d, velas, c = dossier.construir("manana")
+        avisos = d["avisos_de_datos"]
+        api = _api(avisos)
+        hechos = _vigilar(c, velas, api, avisos)
+        if hechos:
+            d["cartera"] = _resumen(c, d)
     ayer = sorted((RAIZ / ("datos" + SUFIJO)).glob("*/cierre.json"))
     d["avisos_de_ayer"] = (leer_json(ayer[-1], {}).get("avisos_manana", []) if ayer else [])
     d["lecciones_recientes"] = [x["leccion"] for x in leer_lineas(ESTADO / "lecciones.jsonl")][-6:]
@@ -306,9 +407,11 @@ def manana(a):
     via = d["via"] = None if a.sin_modelo else modelo.autenticacion()
     if via:
         nivel = gasto.nivel_para_hoy() if via == "clave" else {"nivel": reglas()["autenticacion"]["nivel_con_plan"]}
+        if getattr(a, "nivel", None):       # nivel fijado a mano al lanzar la tarea
+            nivel = dict(nivel, nivel=a.nivel)
         motivo = "el crédito de API del mes no da para más"
         if nivel["nivel"] != "sin_modelo":
-            informes, costes = _investigar(d, nivel["nivel"], a)
+            informes, costes = (previos, []) if previos is not None else _investigar(d, nivel["nivel"], a)
             if costes and all(i.get("sin_saldo") for i in costes):
                 motivo = "la organización de la clave de API no tiene saldo"
                 nivel["nivel"] = "sin_modelo"
@@ -325,10 +428,14 @@ def manana(a):
         t = p["ticker"].upper()
         if p.get("decision") == "vender" and t in c["posiciones"] and not any(o["ticker"] == t for o in plan["ordenes"]):
             plan["ordenes"].append({"ticker": t, "accion": "vender", "motivo": p.get("comentario", ""),
-                                    "veredicto": "APROBADA", "motivos": []})
-        elif _subir_stop(c, t, p.get("nuevo_stop"), precios.get(t), api, avisos):
-            hechos.append({"hora": ahora_madrid().strftime("%H:%M"), "ticker": t, "accion": "stop subido", "cantidad": 0,
-                           "precio": p["nuevo_stop"], "importe_usd": 0, "motivo": p.get("comentario", "")})
+                                    "por_que": p.get("por_que"), "veredicto": "APROBADA", "motivos": []})
+        else:
+            if _subir_stop(c, t, p.get("nuevo_stop"), precios.get(t), api, avisos):
+                hechos.append({"hora": ahora_madrid().strftime("%H:%M"), "ticker": t, "accion": "stop subido", "cantidad": 0,
+                               "precio": p["nuevo_stop"], "importe_usd": 0, "motivo": p.get("comentario", "")})
+            if _subir_objetivo(c, t, p.get("nuevo_objetivo"), precios.get(t), api, avisos):
+                hechos.append({"hora": ahora_madrid().strftime("%H:%M"), "ticker": t, "accion": "objetivo subido", "cantidad": 0,
+                               "precio": p["nuevo_objetivo"], "importe_usd": 0, "motivo": p.get("comentario", "")})
     plan.update({"fecha": ahora_madrid().date().isoformat(), "nivel": nivel["nivel"],
                  "coste_usd": round(sum(i.get("coste_usd", 0) for i in costes), 4), "llamadas": costes})
     carpeta = carpeta_del_dia("datos")
@@ -363,7 +470,7 @@ def apertura(a):
     elif (aprobadas or c["posiciones"]) and via and (via == "plan" or gasto.cabe("apertura")):
         r = reglas()
         datos = {k: d.get(k) for k in ("generado", "mercado_hoy", "indices", "plan_de_la_manana", "sesion_de_hoy",
-                                       "noticias", "cartera", "valoracion")}
+                                       "noticias", "cartera", "valoracion", "mirofish")}
         resp, info = modelo.preguntar("apertura", "apertura", r["modelos"]["apertura"], datos, ESQ_APERTURA,
                                       nivel="apertura", tope_usd=r["credito_api"]["tope_por_llamada_usd"]["apertura"],
                                       esfuerzo="medium", espera=420, carpeta=carpeta_del_dia("datos"))
@@ -426,6 +533,50 @@ def apertura(a):
 
 # ---------------------------------------------------------------- 22:10 cierre
 
+def _cuenta_del_dia(res, ops, velas, hoy):
+    """La cuenta del día en claro: con cuánto empezaste, cuánto estuvo invertido
+    y dónde, cuánto arriesgabas y con cuánto terminas."""
+    eur = res["eurusd"]
+
+    def usd_eur(x, signo=False):
+        return [inf.dinero(x, "$", signo), inf.dinero(x / eur, "€", signo)]
+    inicio = res["inicio_dia_usd"]
+    invertido = riesgo = 0.0
+    partes, filas = [], [["<b>Tenías al empezar el día</b>", "", *usd_eur(inicio), ""]]
+    if res["aportado_hoy_usd"] and inicio != res["aportado_usd"]:      # el primer día todo es aportación
+        filas.append(["de ellos, aportación de hoy", "", *usd_eur(res["aportado_hoy_usd"]), ""])
+    for p in res["posiciones"]:
+        s = velas.get(p["ticker"])
+        comprada_hoy = p["fecha_entrada"] >= hoy
+        previo = p["entrada"] if comprada_hoy or not s or len(s["c"]) < 2 else s["c"][-2]
+        puesto = p["cantidad"] * previo                 # lo que valía al empezar el día, o lo pagado si se compró hoy
+        en_riesgo = max(p["cantidad"] * (p["precio"] - p["stop"]), 0.0)
+        invertido += puesto
+        riesgo += en_riesgo
+        partes.append("%s en %s" % (inf.dinero(puesto), inf.e(p["ticker"])))
+        filas.append(["Invertido en %s%s" % (inf.e(p["ticker"]), " <small class='gris'>comprada hoy</small>" if comprada_hoy else ""),
+                      "arriesgas %s hasta el stop" % inf.dinero(en_riesgo), *usd_eur(puesto),
+                      inf.dinero(p["valor_usd"] - puesto, "$", True)])
+    for o in ops:
+        if o["accion"] == "venta":
+            filas.append(["Vendida hoy: %s" % inf.e(o["ticker"]), inf.corta(o.get("motivo", ""), 40), *usd_eur(o["importe_usd"]),
+                          "%s <small class='gris'>toda la operación</small>" % inf.dinero(o.get("resultado_usd"), "$", True)])
+    filas.append(["En caja, sin invertir", "", *usd_eur(res["caja_usd"]), ""])
+    filas.append(["<b>Terminas el día con</b>", "", *("<b>%s</b>" % x for x in usd_eur(res["valor_usd"])),
+                  "<b>%s</b>" % inf.dinero(res["resultado_dia_usd"], "$", True)])
+    if partes:
+        frase = ("Empezaste el día con %s. Estuvieron invertidos %s (%s) y el resto, %s, en caja. Si hubieran saltado "
+                 "todos los stops habrías perdido como mucho %s. Terminas con %s: %s (%s)." % (
+                     inf.dinero(inicio), inf.dinero(invertido), ", ".join(partes), inf.dinero(res["caja_usd"]),
+                     inf.dinero(riesgo), inf.dinero(res["valor_usd"]),
+                     inf.dinero(res["resultado_dia_usd"], "$", True), inf.pct(res["resultado_dia_pct"], 2)))
+    else:
+        frase = "Empezaste el día con %s. No hubo nada invertido: todo estuvo en caja. Terminas con %s (%s)." % (
+            inf.dinero(inicio), inf.dinero(res["valor_usd"]), inf.dinero(res["resultado_dia_usd"], "$", True))
+    return "<h2>La cuenta del día</h2><p>%s</p>%s" % (frase, inf.tabla(
+        [("", 0), ("", 0), ("Dólares", 1), ("Euros", 1), ("Resultado de hoy", 1)], filas))
+
+
 def cierre(a):
     d, velas, c = dossier.construir("cierre")
     avisos = d["avisos_de_datos"]
@@ -444,7 +595,7 @@ def cierre(a):
     if via and (via == "plan" or gasto.cabe("cierre")):
         r = reglas()
         datos = {k: d.get(k) for k in ("generado", "mercado_hoy", "indices", "plan_de_la_manana", "sesion_de_hoy",
-                                       "noticias", "marcador")}
+                                       "noticias", "marcador", "mirofish")}
         datos.update({"cartera": res, "operaciones_de_hoy": ops,
                       "apertura": leer_json(carpeta_del_dia("datos") / "apertura.json", {})})
         resp, info = modelo.preguntar("cierre", "cierre", r["modelos"]["cierre"], datos, ESQ_CIERRE, nivel="cierre",
@@ -477,6 +628,7 @@ def cierre(a):
         ("Resultado del día", "%s <small>%s</small>" % (inf.dinero(res["resultado_dia_usd"], "$", True), inf.pct(res["resultado_dia_pct"], 2))),
         ("S&P 500 hoy", inf.pct(sp["var_1d"], 2)),
         ("Total frente al S&P 500", inf.dinero(res["ventaja_sobre_referencia_usd"], "$", True))]),
+        _cuenta_del_dia(res, ops, velas, hoy),
         "<h2>Balance</h2><p>%s</p>" % inf.e(resp["resumen"]),
         "<p>Semana: %s · Total: %s (%s) · Aportado: %s · Mismo dinero en el S&P 500: %s · Operaciones cerradas: %s%s</p>" % (
             inf.pct(res["resultado_semana_pct"], 2), inf.dinero(res["resultado_total_eur"], "€", True),
@@ -501,7 +653,7 @@ def comprobar(a):
     import os
     from .base import claves
     lineas = ["carpeta del proyecto legible: %s" % (RAIZ / "config" / "reglas.json").exists(),
-              "claves leídas de .env: %d de 5" % len(claves()),
+              "claves leídas de .env: %d" % len([v for v in claves().values() if v]),
               "herramientas de datos: %s" % (RAIZ.parent / "repos" / "day-trader-skill").exists(),
               "Chrome para los PDF: %s" % os.path.exists(inf.CHROME)]
     via = modelo.autenticacion()
@@ -515,13 +667,18 @@ def comprobar(a):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Tareas del bot de bolsa (cartera simulada)")
-    ap.add_argument("tarea", choices=["manana", "apertura", "cierre", "comprobar"])
+    ap.add_argument("tarea", choices=["manana", "apertura", "cierre", "mirofish", "mirofish-sintesis", "comprobar"])
     ap.add_argument("--sin-modelo", action="store_true", help="solo datos y reglas, sin llamar a ningún modelo")
     ap.add_argument("--forzar", action="store_true", help="ignora el horario del mercado (para pruebas)")
+    ap.add_argument("--nivel", choices=["alto", "medio", "bajo"], help="fija el nivel de análisis de la mañana")
+    ap.add_argument("--solo-estratega", action="store_true",
+                    help="mañana: rehace la decisión y el informe con los datos y la investigación ya hechos hoy")
     a = ap.parse_args(argv)
     print("[%s] inicio de %s%s" % (ahora_madrid().strftime("%Y-%m-%d %H:%M:%S"), a.tarea, " (PRUEBA)" if SUFIJO else ""), flush=True)
     try:
-        tareas = {"manana": manana, "apertura": apertura, "cierre": cierre, "comprobar": comprobar}
+        from . import mirofish
+        tareas = {"manana": manana, "apertura": apertura, "cierre": cierre, "comprobar": comprobar,
+                  "mirofish": mirofish.ejecutar, "mirofish-sintesis": mirofish.resintetizar}
         print("[%s] %s" % (ahora_madrid().strftime("%H:%M:%S"), tareas[a.tarea](a)))
         return 0
     except Exception:

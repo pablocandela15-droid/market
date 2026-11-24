@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import re
 import time
 import urllib.parse
 
@@ -16,10 +17,16 @@ SERVIDORES = ("https://query2.finance.yahoo.com", "https://query1.finance.yahoo.
 PAUSA = 0.25
 
 
+def _yahoo(simbolo):
+    """Símbolo en la forma de Yahoo: las clases de acciones van con guion (BRK.B -> BRK-B).
+    Los que ya llevan punto por otro motivo (DX-Y.NYB, 000001.SS) se dejan como están."""
+    s = simbolo.upper()
+    return s.replace(".", "-") if re.fullmatch(r"[A-Z]{1,5}\.[A-Z]", s) else s
+
+
 def serie(simbolo, rango="1y", intervalo="1d"):
     """Velas de un símbolo: listas t, o, h, l, c, v sin huecos, más los metadatos."""
-    ruta = "/v8/finance/chart/%s?range=%s&interval=%s" % (
-        urllib.parse.quote(simbolo.upper().replace(".", "-")), rango, intervalo)
+    ruta = "/v8/finance/chart/%s?range=%s&interval=%s" % (urllib.parse.quote(_yahoo(simbolo)), rango, intervalo)
     ultimo = None
     for srv in SERVIDORES:
         try:
@@ -111,6 +118,59 @@ def ficha(s):
         "volumen_vs_media": round(v[-1] / vol20, 2) if vol20 else None,
         "minimo_10d": round(min(s["l"][-10:]), 2),
         "maximo_20d": round(max(s["h"][-20:]), 2),
+    }
+
+
+def cierres(simbolos, rango="1y", errores=None):
+    """Cierres diarios de muchos valores a la vez (20 por petición). {ticker: [cierres]}.
+
+    Es la forma barata de mirar el mercado entero; no trae máximos ni mínimos,
+    así que para un valor concreto se pide después su serie completa.
+    """
+    out = {}
+    simbolos = list(simbolos)
+    for i in range(0, len(simbolos), 20):
+        lote = simbolos[i:i + 20]
+        mapa = {_yahoo(s): s for s in lote}
+        ruta = "/v7/finance/spark?symbols=%s&range=%s&interval=1d" % (",".join(urllib.parse.quote(k) for k in mapa), rango)
+        doc = None
+        for srv in SERVIDORES:
+            try:
+                doc = json.loads(pedir(srv + ruta, {"User-Agent": UA_CLIENTE}, reintentos=1, pausa=4))
+                break
+            except (ErrorFuente, ValueError):
+                continue
+        if doc is None:
+            if errores is not None:
+                errores.append("Yahoo no dio precios de %d valores (%s…)" % (len(lote), ", ".join(lote[:3])))
+            continue
+        for item in (doc.get("spark") or {}).get("result") or []:
+            resp = (item.get("response") or [{}])[0]
+            c = [x for x in ((resp.get("indicators") or {}).get("quote") or [{}])[0].get("close") or [] if x is not None]
+            sim = mapa.get((item.get("symbol") or "").upper())
+            if sim and len(c) > 30:
+                out[sim] = {"c": c, "fecha": datetime.datetime.fromtimestamp(
+                    (resp.get("timestamp") or [0])[-1], datetime.timezone.utc).date().isoformat()}
+        time.sleep(PAUSA)
+    return out
+
+
+def ficha_de_cierres(c, fecha=None):
+    """La misma ficha que `ficha`, calculada solo con cierres (el rango diario es aproximado)."""
+    precio = c[-1]
+    m20, m50 = _media(c, 20), _media(c, 50)
+    cambios = [abs(c[i] - c[i - 1]) for i in range(max(1, len(c) - 14), len(c))]
+    a = sum(cambios) / len(cambios) * 1.4 if cambios else None      # el rango real suele ser ~1,4 veces el cambio entre cierres
+    maximo = max(c[-252:])
+    return {
+        "precio": round(precio, 2), "fecha_dato": fecha,
+        "var_1d": _var(c, 1), "var_5d": _var(c, 5), "var_1m": _var(c, 21), "var_3m": _var(c, 63),
+        "rsi14": rsi(c),
+        "sobre_media20_pct": round((precio / m20 - 1) * 100, 1) if m20 else None,
+        "sobre_media50_pct": round((precio / m50 - 1) * 100, 1) if m50 else None,
+        "bajo_maximo_anual_pct": round((precio / maximo - 1) * 100, 1) if maximo else None,
+        "atr14": round(a, 2) if a else None, "atr14_pct": round(a / precio * 100, 1) if a else None,
+        "volumen_vs_media": None, "minimo_10d": round(min(c[-10:]), 2), "maximo_20d": round(max(c[-20:]), 2),
     }
 
 

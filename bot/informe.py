@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-ESCALAS = (1.0, 0.93, 0.86, 0.8, 0.74, 0.68)
+ESCALAS = (1.0, 0.95, 0.9, 0.86, 0.82, 0.78, 0.74, 0.71, 0.68)
 
 CSS = """
 @page { size: A4; margin: 9mm 10mm; }
@@ -103,7 +103,8 @@ def cifras(pares):
         '<div class="cifra"><b>%s</b><div class="et">%s</div></div>' % (v, e(k)) for k, v in pares)
 
 
-SECTOR = {"tecnologia": "Tecnología", "renovables": "Renovables", "nuclear": "Nuclear", "defensa": "Defensa"}
+SECTOR = {"tecnologia": "Tecnología", "renovables": "Renovables", "nuclear": "Nuclear", "defensa": "Defensa",
+          "Inteligencia artificial y chips": "IA y chips", "Consumo discrecional": "Consumo discr."}
 
 
 def sector(s):
@@ -151,7 +152,7 @@ def componer(titulo, subtitulo, chips, cuerpo, pie, ruta_pdf):
 # ---------------------------------------------------------------- bloques comunes
 
 PIE = ("Simulación sin dinero real. Análisis automático con datos públicos (Yahoo, Finviz, FRED, SEC, Damodaran, "
-       "Dataroma): no es asesoramiento financiero y puede contener errores.")
+       "Dataroma, Alpha Vantage): no es asesoramiento financiero y puede contener errores.")
 
 
 def bloque_indices(indices, nombres):
@@ -192,16 +193,22 @@ def bloque_operaciones(ops, vacio="Sin operaciones."):
                   ("Resultado", 1), ("Motivo", 0)], filas, vacio)
 
 
-def bloque_plan(ordenes, vacio="Hoy no hay órdenes en el plan."):
+def bloque_plan(ordenes, vacio="Hoy no hay órdenes en el plan.", con_motivo=True):
     filas = []
     for o in ordenes:
         ok = o.get("veredicto") == "APROBADA"
-        detalle = "; ".join(o.get("motivos") or []) or o.get("motivo", "")
+        notas = "; ".join(o.get("motivos") or [])
+        detalle = notas if not ok else " · ".join(x for x in (o.get("motivo", ""), notas) if x)
         filas.append([e(o.get("ticker")), e(o.get("accion")), num(o.get("entrada")), num(o.get("stop")),
                       num(o.get("objetivo")),
                       num(o.get("cantidad"), 4 if o.get("cantidad") and o["cantidad"] != int(o["cantidad"]) else 0) if o.get("cantidad") else "",
                       dinero(o["cantidad"] * o["entrada"]) if o.get("cantidad") and o.get("entrada") else "",
                       '<span class="%s">%s</span>' % ("ok" if ok else "no", e(o.get("veredicto", ""))),
                       corta(detalle, 150)])
-    return tabla([("Valor", 0), ("Acción", 0), ("Entrada", 1), ("Stop", 1), ("Objetivo", 1), ("Acciones", 1),
-                  ("Importe", 1), ("Reglas", 0), ("Motivo", 0)], filas, vacio)
+    cab = [("Valor", 0), ("Acción", 0), ("Entrada", 1), ("Stop", 1), ("Objetivo", 1), ("Acciones", 1),
+           ("Importe", 1), ("Reglas", 0), ("Motivo", 0)]
+    if not con_motivo:          # el motivo ya va explicado aparte; aquí solo las notas de las reglas
+        cab[-1] = ("Nota de las reglas", 0)
+        for f, o in zip(filas, ordenes):
+            f[-1] = corta("; ".join(o.get("motivos") or []), 110)
+    return tabla(cab, filas, vacio)

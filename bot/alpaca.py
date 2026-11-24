@@ -78,6 +78,13 @@ class Alpaca:
                 return self._llamar("PATCH", "/v2/orders/%s" % pata["id"], {"stop_price": "%.2f" % nuevo_stop})
         return None
 
+    def mover_objetivo(self, orden_id, nuevo_objetivo):
+        """Aleja el objetivo de una compra con salida doble."""
+        for pata in self.orden(orden_id).get("legs") or []:
+            if pata.get("type") == "limit" and pata.get("status") not in ("filled", "canceled", "expired"):
+                return self._llamar("PATCH", "/v2/orders/%s" % pata["id"], {"limit_price": "%.2f" % nuevo_objetivo})
+        return None
+
     def cerrar(self, simbolo):
         """Cancela las órdenes abiertas del valor y vende toda la posición a mercado."""
         for o in self.ordenes_abiertas(simbolo) or []:

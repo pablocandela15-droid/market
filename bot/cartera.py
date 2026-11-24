@@ -70,7 +70,7 @@ def _anotar(ticker, accion, cantidad, precio, motivo, via, extra=None):
     return fila
 
 
-def comprar(c, ticker, cantidad, precio, stop, objetivo, motivo, via, orden_id=None, stop_en_broker=False):
+def comprar(c, ticker, cantidad, precio, stop, objetivo, motivo, via, orden_id=None, stop_en_broker=False, tesis=None):
     importe = round(cantidad * precio, 2)
     if importe > c["caja_usd"] + 0.01:
         raise ValueError("no hay caja para comprar %s: %.2f $ > %.2f $" % (ticker, importe, c["caja_usd"]))
@@ -79,7 +79,8 @@ def comprar(c, ticker, cantidad, precio, stop, objetivo, motivo, via, orden_id=N
         "cantidad": round(cantidad, 6), "precio_entrada": round(precio, 4),
         "fecha_entrada": ahora_madrid().date().isoformat(), "stop": stop, "objetivo": objetivo,
         "riesgo_usd": round(cantidad * (precio - stop), 2), "motivo": motivo, "via": via,
-        "orden_id": orden_id, "stop_en_broker": stop_en_broker, "revisado_hasta": None}
+        "orden_id": orden_id, "stop_en_broker": stop_en_broker, "revisado_hasta": None,
+        "tesis": tesis or {}}       # por qué se compró, qué se esperaba y cuándo se saldría
     return _anotar(ticker, "compra", cantidad, precio, motivo, via)
 
 
@@ -154,19 +155,28 @@ def resumen(c, precios, eurusd, ref_precio):
             "stop": p["stop"], "objetivo": p["objetivo"],
             "hasta_stop_pct": round((p["stop"] / precio - 1) * 100, 1),
             "hasta_objetivo_pct": round((p["objetivo"] / precio - 1) * 100, 1),
-            "fecha_entrada": p["fecha_entrada"], "via": p["via"]})
+            "fecha_entrada": p["fecha_entrada"], "via": p["via"],
+            "dias_en_cartera": (ahora_madrid().date() - dt.date.fromisoformat(p["fecha_entrada"])).days,
+            "motivo_de_compra": p.get("motivo"), "tesis_de_compra": p.get("tesis") or {}})
     valor = c["caja_usd"] + valor_pos
     aportado_eur = sum(a["eur"] for a in c["aportaciones"])
     aportado_usd = sum(a["usd"] for a in c["aportaciones"])
     ref = c["referencia"]["unidades"] * ref_precio
     hoy = ahora_madrid().date().isoformat()
     previos = [v for v in c["valor_diario"] if v["fecha"] < hoy]
-    # Sin cierre anterior (primer día), la base es el dinero aportado.
-    inicio = {"valor_usd": aportado_usd, "referencia_usd": aportado_usd}
-    ayer = previos[-1] if previos else inicio
     lunes = (ahora_madrid().date() - dt.timedelta(days=ahora_madrid().weekday())).isoformat()
     antes_semana = [v for v in c["valor_diario"] if v["fecha"] < lunes]
-    base_semana = antes_semana[-1] if antes_semana else inicio
+
+    def base(anterior, desde):
+        """Punto de partida de un periodo: el último cierre anterior más el dinero
+        aportado después. Sin cierre anterior (primer día), todo lo aportado."""
+        if not anterior:
+            return {"valor_usd": aportado_usd, "referencia_usd": aportado_usd}
+        nuevo = sum(a["usd"] for a in c["aportaciones"] if a["fecha"] >= desde)
+        return {"valor_usd": anterior["valor_usd"] + nuevo, "referencia_usd": anterior["referencia_usd"] + nuevo}
+    ayer = base(previos[-1] if previos else None, hoy)
+    base_semana = base(antes_semana[-1] if antes_semana else None, lunes)
+    aportado_hoy = sum(a["usd"] for a in c["aportaciones"] if a["fecha"] == hoy)
 
     def pct(a, b):
         return round((a / b - 1) * 100, 2) if b else None
@@ -176,6 +186,7 @@ def resumen(c, precios, eurusd, ref_precio):
         "aportado_eur": aportado_eur, "aportado_usd": round(aportado_usd, 2),
         "resultado_total_usd": round(valor - aportado_usd, 2), "resultado_total_pct": pct(valor, aportado_usd),
         "resultado_total_eur": round(valor / eurusd - aportado_eur, 2),
+        "inicio_dia_usd": round(ayer["valor_usd"], 2), "aportado_hoy_usd": round(aportado_hoy, 2),
         "resultado_dia_usd": round(valor - ayer["valor_usd"], 2) if ayer else None,
         "resultado_dia_pct": pct(valor, ayer["valor_usd"]) if ayer else None,
         "resultado_semana_pct": pct(valor, base_semana["valor_usd"]) if base_semana else None,

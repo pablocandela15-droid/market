@@ -96,7 +96,14 @@ def validar(orden, res, valoracion, precio_actual=None, r=None):
                 avisos.append("sin beneficios en los últimos 12 meses: no tiene P/E ni PEG")
             else:
                 motivos.append("empresa sin beneficios")
-        dias = dias_hasta_resultados(valoracion.get("resultados"), ahora_madrid().date())
+        hoy = ahora_madrid().date()
+        fecha = valoracion.get("fecha_de_resultados")    # fecha confirmada del calendario, si la hay
+        try:
+            dias = (hoy.fromisoformat(fecha) - hoy).days if fecha else None
+        except ValueError:
+            dias = None
+        if dias is None:
+            dias = dias_hasta_resultados(valoracion.get("resultados"), hoy)
         if dias is not None and 0 <= dias <= rv["dias_sin_comprar_antes_de_resultados"]:
             motivos.append("presenta resultados en %d día(s)" % dias)
     cantidad, nota = dimensionar(entrada, stop, res, r)
@@ -114,18 +121,19 @@ def ejecutar_compra(c, orden, cantidad, precio, api=None):
     sin claves, se anota en la cartera al precio actual (modo en seco)."""
     t = orden["ticker"].upper()
     stop, objetivo, motivo = float(orden["stop"]), float(orden["objetivo"]), orden.get("motivo", "")
+    tesis = {k: orden[k] for k in ("por_que", "que_esperamos", "cuando_saldriamos") if orden.get(k)}
     if api is None:
-        return cartera.comprar(c, t, cantidad, precio, stop, objetivo, motivo, "en seco")
+        return cartera.comprar(c, t, cantidad, precio, stop, objetivo, motivo, "en seco", tesis=tesis)
     ref = "bot-%s-%s" % (ahora_madrid().strftime("%Y%m%d-%H%M"), t)
     enviada, con_salidas = api.comprar(t, cantidad, stop, objetivo, ref)
     hecha = api.esperar_ejecucion(enviada["id"])
     if hecha.get("status") != "filled":
         c.setdefault("pendientes", {})[t] = {"orden_id": enviada["id"], "stop": stop, "objetivo": objetivo,
-                                             "motivo": motivo, "stop_en_broker": con_salidas}
+                                             "motivo": motivo, "stop_en_broker": con_salidas, "tesis": tesis}
         raise ErrorFuente("Alpaca aún no ha ejecutado la compra de %s (estado: %s); queda pendiente"
                           % (t, hecha.get("status")))
     return cartera.comprar(c, t, float(hecha["filled_qty"]), float(hecha["filled_avg_price"]), stop, objetivo,
-                           motivo, "alpaca", enviada["id"], con_salidas)
+                           motivo, "alpaca", enviada["id"], con_salidas, tesis=tesis)
 
 
 def ejecutar_venta(c, ticker, precio, motivo, api=None):
@@ -145,7 +153,7 @@ def sincronizar(c, api):
         if o.get("status") == "filled":
             hechos.append(cartera.comprar(c, t, float(o["filled_qty"]), float(o["filled_avg_price"]),
                                           pen["stop"], pen["objetivo"], pen["motivo"], "alpaca",
-                                          pen["orden_id"], pen["stop_en_broker"]))
+                                          pen["orden_id"], pen["stop_en_broker"], tesis=pen.get("tesis")))
             del c["pendientes"][t]
         elif o.get("status") in ("canceled", "rejected", "expired"):
             del c["pendientes"][t]

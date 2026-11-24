@@ -13,7 +13,8 @@ reglas y registra una simulación.
 |---|---|---|
 | 7:00, todos los días | `manana` | Recoge datos, cuatro investigadores y un estratega escriben el plan del día, y las reglas aprueban o bloquean cada orden |
 | 15:45, lunes a viernes | `apertura` | Revisa el plan con el mercado abierto y lanza las órdenes aprobadas en la cuenta simulada |
-| 22:10, lunes a viernes | `cierre` | Resultado del día frente al S&P 500, diario de operaciones y lecciones |
+| 22:10, lunes a viernes | `cierre` | La cuenta del día (con cuánto empezaste, dónde estuvo invertido y con cuánto terminas), resultado frente al S&P 500 y lecciones |
+| 17:00, domingos | `mirofish` | Simulación de cómo reaccionan inversores y medios, resumida en tesis y predicciones que luego se comprueban |
 
 El detalle está en [docs/tareas-programadas.md](docs/tareas-programadas.md) y
 las fuentes en [docs/estado-del-arte.md](docs/estado-del-arte.md).
@@ -24,6 +25,7 @@ las fuentes en [docs/estado-del-arte.md](docs/estado-del-arte.md).
 
    | Clave | Para qué | Sin ella |
    |---|---|---|
+   | `ZEP_API_KEY` (en `../repos/MiroFish/.env`) | Memoria de la simulación de MiroFish | La simulación semanal no se ejecuta |
    | `ANTHROPIC_API_KEY` | Llamar a los modelos con el crédito de API | Se usa la sesión del plan de Claude si `autenticacion.modo` lo permite; si no, los informes salen solo con datos |
    | `ALPACA_API_KEY` y `ALPACA_SECRET_KEY` | Ejecutar en la cuenta de simulación de Alpaca | Las operaciones se anotan "en seco" al último precio |
    | `FRED_API_KEY` | Datos macro (tipos, inflación, paro) | El bloque macro usa solo datos de mercado |
@@ -57,8 +59,9 @@ python3 -m bot.tarea cierre
 python3 -m unittest discover -s tests  # pruebas de las reglas y los stops
 ```
 
-Opciones: `--sin-modelo` (solo datos y reglas) y `--forzar` (ignora el horario
-del mercado; solo para pruebas). Con `BOT_PRUEBA=1` delante, todo se escribe en
+Opciones: `--sin-modelo` (solo datos y reglas), `--forzar` (ignora el horario
+del mercado; solo para pruebas) y, en la tarea de la mañana, `--solo-estratega`
+(rehace el plan y el PDF con los datos y la investigación ya guardados ese día). Con `BOT_PRUEBA=1` delante, todo se escribe en
 carpetas terminadas en `-prueba`.
 
 ## Dónde está cada cosa

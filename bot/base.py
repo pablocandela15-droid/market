@@ -97,12 +97,9 @@ def universo():
 
 
 def valores_del_universo():
-    """{ticker: sector}, sin repetidos y en el orden del archivo."""
-    out = {}
-    for sector, lista in universo()["sectores"].items():
-        for t in lista:
-            out.setdefault(t, sector)
-    return out
+    """{ticker: sector} de todo lo que el bot puede comprar: S&P 500 más temas."""
+    from . import universo as u
+    return u.valores()
 
 
 # ---------------------------------------------------------------- peticiones web

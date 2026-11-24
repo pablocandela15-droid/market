@@ -148,19 +148,34 @@ def damodaran():
     return doc
 
 
-# Industria de Damodaran que sirve de vara de medir para cada sector del universo.
+# Industrias de Damodaran que sirven de vara de medir para cada sector y tema del universo.
 INDUSTRIA_DE_SECTOR = {
-    "tecnologia": ["Semiconductor", "Software (System & Application)", "Computers/Peripherals"],
-    "renovables": ["Green & Renewable Energy", "Power"],
-    "nuclear": ["Power", "Utility (General)", "Metals & Mining"],
-    "defensa": ["Aerospace/Defense"],
+    "Tecnología": ["Semiconductor", "Software (System & Application)", "Computers/Peripherals", "Computer Services"],
+    "Salud": ["Drugs (Pharmaceutical)", "Drugs (Biotechnology)", "Healthcare Products", "Healthcare Support Services"],
+    "Finanzas": ["Bank (Money Center)", "Banks (Regional)", "Insurance (General)", "Brokerage & Investment Banking",
+                 "Financial Svcs. (Non-bank & Insurance)"],
+    "Consumo discrecional": ["Retail (General)", "Retail (Special Lines)", "Auto & Truck", "Restaurant/Dining",
+                             "Hotel/Gaming", "Homebuilding"],
+    "Comunicación": ["Software (Internet)", "Entertainment", "Telecom. Services", "Advertising"],
+    "Industria": ["Machinery", "Aerospace/Defense", "Transportation", "Electrical Equipment", "Engineering/Construction"],
+    "Consumo básico": ["Food Processing", "Beverage (Soft)", "Household Products", "Retail (Grocery and Food)", "Tobacco"],
+    "Energía": ["Oil/Gas (Integrated)", "Oil/Gas (Production and Exploration)", "Oilfield Svcs/Equip.", "Oil/Gas Distribution"],
+    "Servicios públicos": ["Utility (General)", "Power", "Utility (Water)"],
+    "Inmobiliario": ["R.E.I.T.", "Real Estate (Operations & Services)"],
+    "Materiales": ["Chemical (Specialty)", "Chemical (Basic)", "Metals & Mining", "Steel", "Packaging & Container"],
+    "Inteligencia artificial y chips": ["Semiconductor", "Semiconductor Equip"],
+    "Renovables": ["Green & Renewable Energy", "Power"],
+    "Nuclear y uranio": ["Power", "Utility (General)", "Metals & Mining"],
+    "Defensa": ["Aerospace/Defense"],
 }
 
 
 def media_del_sector(sector, tabla=None):
     """Media de las industrias de referencia de un sector: P/E futuro y PEG."""
     tabla = tabla or damodaran()
-    filas = [tabla["industrias"][i] for i in INDUSTRIA_DE_SECTOR.get(sector, []) if i in tabla["industrias"]]
+    nombres = [i for i in INDUSTRIA_DE_SECTOR.get(sector, []) if i in tabla["industrias"]] or \
+              [i for i in ("Total Market",) if i in tabla["industrias"]]
+    filas = [tabla["industrias"][i] for i in nombres]
     if not filas:
         return None
 
@@ -168,7 +183,7 @@ def media_del_sector(sector, tabla=None):
         v = [f[k] for f in filas if f.get(k)]
         return round(sum(v) / len(v), 1) if v else None
     return {"per_futuro": med("per_futuro"), "per_12m": med("per_ultimos_12m"), "peg": med("peg"),
-            "industrias": [i for i in INDUSTRIA_DE_SECTOR[sector] if i in tabla["industrias"]]}
+            "industrias": nombres}
 
 
 # ---------------------------------------------------------------- Dataroma

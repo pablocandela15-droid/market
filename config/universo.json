@@ -1,49 +1,63 @@
 {
-  "_nota": "Lista de valores que el bot vigila. No es una recomendación: es el terreno de juego. Edítala cuando quieras.",
+  "_nota": "El terreno de juego del bot. La base es el S&P 500 completo (se descarga solo, con el sector de cada empresa); los temas añaden valores de fuera del índice y agrupan los que interesa seguir juntos. No es una recomendación.",
+  "base": "sp500",
   "prioritarios": ["NVDA"],
-  "sectores": {
-    "tecnologia": [
-      "NVDA", "MSFT", "AAPL", "GOOGL", "AMZN", "META", "AVGO", "AMD", "TSM", "ORCL",
-      "CRM", "PLTR", "MU", "QCOM", "ASML", "ADBE", "NOW", "ANET", "ARM", "SMCI",
-      "NET", "DDOG", "SNOW", "CRWD", "IONQ", "SOUN", "PATH"
-    ],
-    "renovables": [
-      "FSLR", "ENPH", "NEE", "RUN", "SEDG", "PLUG", "BE", "ARRY", "NXT", "SHLS",
-      "CWEN", "BEP", "ORA", "FLNC"
-    ],
-    "nuclear": [
-      "CEG", "VST", "CCJ", "OKLO", "SMR", "LEU", "BWXT", "NNE", "UEC", "UUUU",
-      "DNN", "TLN", "GEV"
-    ],
-    "defensa": [
-      "LMT", "RTX", "NOC", "GD", "LHX", "HII", "KTOS", "AVAV", "LDOS", "BAH",
-      "TDG", "HWM", "RKLB", "CW", "MRCY", "AXON"
-    ]
+  "temas": {
+    "Inteligencia artificial y chips": ["NVDA", "AVGO", "AMD", "TSM", "MU", "ARM", "ASML", "SMCI", "ANET", "PLTR", "ORCL", "QCOM"],
+    "Renovables": ["FSLR", "ENPH", "NEE", "RUN", "SEDG", "PLUG", "BE", "ARRY", "NXT", "SHLS", "CWEN", "BEP", "ORA", "FLNC"],
+    "Nuclear y uranio": ["CEG", "VST", "CCJ", "OKLO", "SMR", "LEU", "BWXT", "NNE", "UEC", "UUUU", "DNN", "TLN", "GEV"],
+    "Defensa": ["LMT", "RTX", "NOC", "GD", "LHX", "HII", "KTOS", "AVAV", "LDOS", "BAH", "TDG", "HWM", "RKLB", "CW", "MRCY", "AXON"]
   },
-  "fondos_de_contexto": {
-    "_nota": "Solo para medir cómo va cada sector. El bot no los compra.",
-    "tecnologia": ["XLK", "SMH"],
-    "renovables": ["ICLN", "TAN"],
-    "nuclear": ["URA", "NLR"],
-    "defensa": ["ITA", "XAR"]
+  "fondos_de_sector": {
+    "Tecnología": "XLK",
+    "Salud": "XLV",
+    "Finanzas": "XLF",
+    "Consumo discrecional": "XLY",
+    "Comunicación": "XLC",
+    "Industria": "XLI",
+    "Consumo básico": "XLP",
+    "Energía": "XLE",
+    "Servicios públicos": "XLU",
+    "Inmobiliario": "XLRE",
+    "Materiales": "XLB"
+  },
+  "fondos_de_tema": {
+    "Semiconductores": "SMH",
+    "Renovables": "ICLN",
+    "Nuclear y uranio": "URA",
+    "Defensa": "ITA",
+    "Biotecnología": "XBI",
+    "Bancos regionales": "KRE",
+    "Constructoras de vivienda": "XHB",
+    "Mineras de oro": "GDX"
   },
   "mercado": {
     "S&P 500": "^GSPC",
     "Nasdaq 100": "^NDX",
+    "Dow Jones": "^DJI",
     "Russell 2000": "^RUT",
     "VIX": "^VIX",
     "Bono 10 años (%)": "^TNX",
+    "Bonos largos (TLT)": "TLT",
     "Euro/dólar": "EURUSD=X",
+    "Dólar (índice)": "DX-Y.NYB",
     "Futuro S&P 500": "ES=F",
     "Futuro Nasdaq": "NQ=F",
     "Euro Stoxx 50": "^STOXX50E",
+    "DAX": "^GDAXI",
+    "IBEX 35": "^IBEX",
+    "FTSE 100": "^FTSE",
     "Nikkei 225": "^N225",
-    "Hang Seng": "^HSI"
+    "Hang Seng": "^HSI",
+    "Shanghái": "000001.SS",
+    "Emergentes (EEM)": "EEM",
+    "Bitcoin": "BTC-USD"
   },
   "materias_primas": {
     "Petróleo WTI": "CL=F",
     "Gas natural": "NG=F",
     "Oro": "GC=F",
+    "Plata": "SI=F",
     "Cobre": "HG=F",
     "Uranio (fondo URA)": "URA",
     "Litio (fondo LIT)": "LIT"

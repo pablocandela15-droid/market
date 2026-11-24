@@ -71,6 +71,9 @@ def presupuesto(hoy=None, r=None):
     dias = [hoy + dt.timedelta(days=i) for i in range((renovacion - hoy).days)]
     dias_mercado = sum(1 for d in dias if sesion(d))
     fijo = dias_mercado * (coste_tipico("apertura", r)[0] + coste_tipico("cierre", r)[0])
+    # La simulación semanal de MiroFish (domingos): se aparta su tope para cada domingo que quede.
+    if r.get("mirofish"):
+        fijo += sum(1 for d in dias if d.weekday() == 6) * r["mirofish"].get("tope_usd", 0)
     libre = cred["usd_mes"] - cred["reserva_usd"] - gastado
     return {"credito_usd": cred["usd_mes"], "reserva_usd": cred["reserva_usd"], "gastado_mes_usd": gastado,
             "proxima_renovacion": renovacion.isoformat(),

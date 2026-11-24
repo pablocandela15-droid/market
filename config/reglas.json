@@ -51,6 +51,25 @@
       "cierre": 0.3
     }
   },
+  "mirofish": {
+    "_nota": "Simulación semanal (domingos por la tarde). modelo: el de los agentes (el que más llamadas hace); modelo_informe: el que escribe el informe de MiroFish; modelo_sintesis: el que resume todo para el estratega. tope_usd corta el gasto de la simulación y su informe. plataforma: reddit | twitter | parallel; en un Mac de 8 GB solo cabe reddit. llamadas_a_la_vez: cuántas peticiones de los agentes pasan a la vez a la API; el resto hace cola (menos = más lento y menos rechazos por exceso de ritmo). recomendador_twitter: cómo elige la red tipo Twitter lo que ve cada agente: random (sin modelo, cabe en 8 GB), twitter (modelo pequeño) o twhin-bert (el original, más de 1 GB: no cabe). twitter_publicaciones_por_agente: cuántas publicaciones recomendadas ve cada agente en esa red.",
+    "modelo": "claude-haiku-5-5",
+    "modelo_participantes": "claude-sonnet-5-5",
+    "modelo_informe": "claude-sonnet-5-5",
+    "modelo_sintesis": "claude-fable-5-2",
+    "tope_usd": 6.0,
+    "max_rondas": 72,
+    "plataforma": "reddit",
+    "encuesta": true,
+    "plazo_sesiones": 5,
+    "espera_max_minutos": 150,
+    "dias_de_validez": 8,
+    "borrar_grafo_al_terminar": true,
+    "puerto_puente": 8765,
+    "llamadas_a_la_vez": 8,
+    "recomendador_twitter": "random",
+    "twitter_publicaciones_por_agente": 5
+  },
   "autenticacion": {
     "_nota": "modo: clave | plan | plan_hasta_tener_saldo. Con el plan no se mira el crédito: se usa nivel_con_plan.",
     "modo": "plan_hasta_tener_saldo",
@@ -65,7 +84,7 @@
     "cierre": "claude-sonnet-5-5"
   },
   "limites_fuentes": {
-    "finviz_max_valores_dia": 20,
+    "finviz_max_valores_dia": 30,
     "dataroma_max_valores": 10,
     "noticias_max_valores": 14
   }

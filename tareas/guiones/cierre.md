@@ -10,6 +10,7 @@ Dentro de `<datos>` tienes `plan_de_la_manana`, `operaciones_de_hoy`, `cartera` 
 2. Saca lecciones que sirvan mañana. Una lección útil cambia una regla o una costumbre ("no comprar el día después de una caída del 3 % del índice"); una frase hecha no sirve.
 3. Deja avisos para el informe de mañana: resultados que se publican esta noche o mañana, posiciones cerca del stop, datos macro.
 4. Un solo día no demuestra nada sobre la estrategia. No saques conclusiones generales de una sesión.
+5. Si `mirofish` trae datos, di en una frase de `aciertos` o `fallos` si el día fue en la dirección que apuntaba la simulación o en la contraria.
 
 ## Qué devuelves
 

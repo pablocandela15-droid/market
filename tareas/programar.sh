@@ -40,14 +40,15 @@ case "$1" in
     escribir manana "<dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>0</integer></dict>"
     escribir apertura "$(laborables 15 45)"
     escribir cierre "$(laborables 22 10)"
-    for t in manana apertura cierre; do
+    escribir mirofish "<dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>17</integer><key>Minute</key><integer>0</integer></dict>"
+    for t in manana apertura cierre mirofish; do
       launchctl bootout "$USUARIO/com.botbolsa.$t" 2>/dev/null || true
       launchctl bootstrap "$USUARIO" "$DESTINO/com.botbolsa.$t.plist"
     done
-    echo "Tareas activadas: 7:00 (diaria), 15:45 y 22:10 (lunes a viernes)."
+    echo "Tareas activadas: 7:00 (diaria), 15:45 y 22:10 (lunes a viernes) y MiroFish los domingos a las 17:00."
     ;;
   quitar)
-    for t in manana apertura cierre; do
+    for t in manana apertura cierre mirofish; do
       launchctl bootout "$USUARIO/com.botbolsa.$t" 2>/dev/null || true
       rm -f "$DESTINO/com.botbolsa.$t.plist"
     done
