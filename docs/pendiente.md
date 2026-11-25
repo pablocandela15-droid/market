@@ -1,7 +1,7 @@
 # Estado del trabajo y siguientes pasos
 
 Nota de relevo: si una sesión se corta, aquí está lo necesario para seguir.
-Última actualización: 24 de noviembre de 2026, 7:30.
+Última actualización: 25 de noviembre de 2026, 6:50.
 
 ## Hecho y funcionando
 
@@ -13,9 +13,22 @@ Nota de relevo: si una sesión se corta, aquí está lo necesario para seguir.
 - MiroFish (`bot/mirofish.py`) es la guía principal del estratega. Última
   simulación: 23 nov, postura defensiva. Resultado en `estado/mirofish/ultima.json`.
 - El cierre abre con "La cuenta del día".
-- El estratega no está obligado a operar a diario y puede mantener posiciones.
+- El estratega puede mantener posiciones sin plazo. Desde el 25 nov busca compras
+  cada día mientras haya caja y huecos (perfil agresivo).
 
-## Hecho el 24 nov por la mañana
+## Hecho el 25 nov
+
+- **Perfil agresivo**, pedido por el usuario ("más agresivo y tome algo más de
+  riesgos"): 1,5 % de riesgo por operación, 30 % por posición, 3 compras al
+  día, PEG hasta 2,5, hueco de apertura del 4 % y, al recalcular en la
+  apertura, basta con ganar 1,2 veces lo arriesgado (`validar` en
+  `bot/ordenes.py`, con `previsto`). Los guiones del estratega y de la apertura
+  buscan compras en vez de esperar. Tabla completa y lo que no cambia, en
+  "Perfil agresivo" de tareas-programadas.md. Las cifras las elegí yo como
+  lectura de "algo más": si pide más o menos, se tocan en `config/reglas.json`.
+  Estrena en el informe de las 7:00 y la apertura de las 15:45 del 25 nov.
+
+## Hecho el 24 nov
 
 - **La apertura analiza el mercado y explica cada cambio de plan** (`apertura`,
   `_lo_hecho_en_la_apertura` en `bot/tarea.py`; `tareas/guiones/apertura.md`):
@@ -79,7 +92,9 @@ Nota de relevo: si una sesión se corta, aquí está lo necesario para seguir.
 6. Agentes de MiroFish con Sonnet: descartado por coste con los datos medidos
    (unos 58 $ por simulación). Alternativa por explorar: recortar lo que cada
    agente relee del hilo.
-7. En git: confirmado y subido hasta `393779f` (24 nov). Lo posterior (la
-   apertura que analiza y explica) está sin confirmar.
-8. Primera apertura automática con el código nuevo: miércoles 25 nov a las
-   15:45. Revisar su informe.
+7. En git: confirmado y subido hasta `57b86cd` (25 nov, la apertura que analiza
+   y explica). El perfil agresivo está sin confirmar.
+8. Primera mañana y primera apertura automáticas con el perfil agresivo y la
+   apertura nueva: miércoles 25 nov, 7:00 y 15:45. Revisar sus informes: si el
+   estratega propone más compras, si el tamaño sale con el 1,5 % y si la
+   apertura las ejecuta.

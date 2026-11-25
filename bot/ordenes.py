@@ -13,7 +13,8 @@ from .fuentes import dias_hasta_resultados
 
 
 def dimensionar(entrada, stop, res, r=None):
-    """Cuántas acciones comprar para arriesgar el 1 % de la cartera.
+    """Cuántas acciones comprar para arriesgar la parte de la cartera que fijan las reglas
+    (riesgo_por_operacion_pct), sin pasar del tamaño máximo por posición ni de la caja libre.
 
     Devuelve (cantidad, motivo). cantidad 0 significa que no se puede abrir.
     """
@@ -48,12 +49,14 @@ def _n(x, dec=2):
     return ("%.*f" % (dec, x)).replace(".", ",")
 
 
-def validar(orden, res, valoracion, precio_actual=None, r=None):
+def validar(orden, res, valoracion, precio_actual=None, r=None, previsto=True):
     """Devuelve (veredicto, motivos, cantidad). veredicto: 'APROBADA' o 'BLOQUEADA'.
 
     orden: {ticker, accion, entrada, stop, objetivo}
     res: resumen de la cartera. valoracion: ficha de Finviz del valor (o None).
     precio_actual: en la apertura, el precio en ese momento.
+    previsto: falso en una compra que no venía en el plan de la mañana; se le exige la proporción completa
+    entre ganancia y riesgo, porque se propone ya con el precio de ahora.
     """
     r = r or reglas()
     rr, rv = r["riesgo"], r["valoracion"]
@@ -95,22 +98,26 @@ def validar(orden, res, valoracion, precio_actual=None, r=None):
     if dist > rr["stop_max_pct"]:
         motivos.append("stop demasiado lejos (%.1f %%)" % dist)
     rb = (objetivo - entrada) / (entrada - stop)
-    if rb < rr["min_recompensa_riesgo"] and escapado:
+    # Por la mañana se exige la proporción completa. En la apertura, con el precio real, se admite algo
+    # menos (min_recompensa_riesgo_apertura): que el valor abra un poco más caro no tira el plan.
+    en_apertura = rr.get("min_recompensa_riesgo_apertura", rr["min_recompensa_riesgo"])
+    minimo = en_apertura if precio_actual and previsto else rr["min_recompensa_riesgo"]
+    if rb < minimo and escapado:
         pass        # ya está dicho: se ha encarecido más de lo admitido
-    elif rb < rr["min_recompensa_riesgo"]:
+    elif rb < minimo:
         if precio_actual:
             motivos.append("cotiza a %s $ y se pensaba comprar a %s $. A ese precio se arriesgan %s $ por acción hasta el stop "
-                           "(%s $) para ganar %s $ hasta el objetivo (%s $): %s veces lo arriesgado, y el plan exige al menos %s"
+                           "(%s $) para ganar %s $ hasta el objetivo (%s $): %s veces lo arriesgado, y se exige al menos %s"
                            % (_n(precio_actual), _n(float(orden["entrada"])), _n(entrada - stop), _n(stop), _n(objetivo - entrada),
-                              _n(objetivo), _n(rb, 1), _n(rr["min_recompensa_riesgo"], 1)))
+                              _n(objetivo), _n(rb, 1), _n(minimo, 1)))
         else:
-            motivos.append("ganaría %s por cada 1 que arriesga; el mínimo es %s" % (_n(rb, 1), _n(rr["min_recompensa_riesgo"], 1)))
+            motivos.append("ganaría %s por cada 1 que arriesga; el mínimo es %s" % (_n(rb, 1), _n(minimo, 1)))
     elif not precio_actual:
-        # Margen justo: si abre solo un 1 % más cara, la proporción ya no llega al mínimo y la orden se quedará sin lanzar.
+        # Margen justo: si abre solo un 1 % más cara, la proporción ya no llega a lo que se exige en la apertura.
         caro = entrada * 1.01
-        if (objetivo - caro) / (caro - stop) < rr["min_recompensa_riesgo"]:
+        if (objetivo - caro) / (caro - stop) < en_apertura:
             avisos.append("margen justo: si abre un 1 %% por encima de %s $, ya no ganará %s veces lo que arriesga y no se comprará"
-                          % (_n(entrada), _n(rr["min_recompensa_riesgo"], 1)))
+                          % (_n(entrada), _n(en_apertura, 1)))
     if not valoracion:
         motivos.append("sin datos de valoración")
     else:

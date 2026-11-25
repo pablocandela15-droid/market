@@ -5,19 +5,22 @@
     "dia_aportacion": 1
   },
   "riesgo": {
-    "riesgo_por_operacion_pct": 1.0,
+    "_nota": "Perfil agresivo desde el 25 nov de 2026 (antes: 1 % de riesgo por operación, 25 % por posición, 2 compras al día, hueco de apertura del 3 %, PEG máximo 2 y la misma proporción de 1,5 mañana y tarde). min_recompensa_riesgo se exige al plan de la mañana y a las compras no previstas; min_recompensa_riesgo_apertura, a las compras del plan cuando se recalculan a las 15:45 con el precio real. Con 5 posiciones y todos los stops saltando a la vez, la pérdida prevista es del 7,5 % de la cartera (antes, 5 %).",
+    "riesgo_por_operacion_pct": 1.5,
     "max_posiciones": 5,
-    "max_posicion_pct": 25,
+    "max_posicion_pct": 30,
+    "max_compras_dia": 3,
     "colchon_caja_pct": 5,
     "min_orden_usd": 5,
     "min_recompensa_riesgo": 1.5,
+    "min_recompensa_riesgo_apertura": 1.2,
     "stop_min_pct": 2,
     "stop_max_pct": 15,
-    "max_hueco_apertura_pct": 3,
+    "max_hueco_apertura_pct": 4,
     "acciones_fraccionadas": true
   },
   "valoracion": {
-    "peg_maximo": 2.0,
+    "peg_maximo": 2.5,
     "permitir_sin_beneficios": true,
     "dias_sin_comprar_antes_de_resultados": 2
   },

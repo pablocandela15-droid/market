@@ -25,16 +25,46 @@ cita cada paso están en [estado-del-arte.md](estado-del-arte.md).
 - **Sin clave de API** las tareas funcionan igual, pero el informe trae solo
   datos y no propone operaciones.
 
+## Perfil agresivo
+
+El 25 nov de 2026 el dueño pidió que el bot fuera "más agresivo" y tomara "algo
+más de riesgos". Cambió esto:
+
+| Qué | Antes | Ahora | Dónde |
+|---|---|---|---|
+| Riesgo por operación | 1 % | 1,5 % | `riesgo.riesgo_por_operacion_pct` |
+| Tamaño máximo de una posición | 25 % | 30 % | `riesgo.max_posicion_pct` |
+| Compras al día | 2 | 3 | `riesgo.max_compras_dia` |
+| Ganancia mínima frente al riesgo, al recalcular en la apertura | 1,5 veces | 1,2 veces | `riesgo.min_recompensa_riesgo_apertura` |
+| Cuánto más caro puede abrir un valor del plan | 3 % | 4 % | `riesgo.max_hueco_apertura_pct` |
+| PEG máximo | 2 | 2,5 | `valoracion.peg_maximo` |
+
+Y la actitud de los guiones (`estratega.md`, `apertura.md`): la cartera está
+para estar invertida y cada mañana se buscan compras; una postura defensiva de
+la simulación ya no significa dejar de comprar, sino comprar en los sectores
+que favorece; se admiten valores que se mueven más y compras de continuación;
+en la apertura una orden del plan solo se descarta por un hecho concreto.
+
+No cambia: stop en toda compra, solo compras (sin margen, cortos ni opciones),
+5 posiciones como máximo, nada a 2 días o menos de resultados, nada en un
+sector con sesgo negativo en la simulación, y la proporción de 1,5 veces en el
+plan de la mañana. Las posiciones abiertas antes del cambio conservan su tamaño.
+
+Consecuencia: con 5 posiciones y todos los stops saltando a la vez la pérdida
+prevista pasa del 5 % al 7,5 % de la cartera, y un hueco a la baja puede
+superarla. Para volver atrás basta poner las cifras de la columna "Antes".
+
 ## Reglas comunes
 
 | Regla | Valor |
 |---|---|
 | Capital simulado | 1.000 € iniciales y 200 € el día 1 de cada mes, convertidos a dólares al cambio del día |
 | Estilo | Operaciones de varios días o semanas; nada dentro del día |
-| Riesgo | 1 % por operación, stop obligatorio, máximo 5 posiciones, ninguna por encima del 25 % |
-| Calidad de la operación | Objetivo de al menos 1,5 veces el riesgo; stop entre el 2 % y el 15 % |
+| Perfil | Agresivo desde el 25 nov de 2026, a petición del dueño (ver "Perfil agresivo") |
+| Riesgo | 1,5 % por operación, stop obligatorio, máximo 5 posiciones, ninguna por encima del 30 %, hasta 3 compras al día |
+| Calidad de la operación | Objetivo de al menos 1,5 veces el riesgo por la mañana y 1,2 veces al recalcular en la apertura; stop entre el 2 % y el 15 % |
 | Tipo de orden | Solo compras, con acciones fraccionadas; sin cortos, margen ni opciones |
-| Valoración | Sin compra con PEG por encima de 2, sin datos, o a 2 días o menos de resultados |
+| Valoración | Sin compra con PEG por encima de 2,5, sin datos, o a 2 días o menos de resultados |
 | Ejecución | El bot decide solo, únicamente contra la dirección de simulación de Alpaca |
 | Referencia | El mismo dinero, el mismo día, en el S&P 500 (sin dividendos) |
 | Salida | Un PDF por tarea en `Informes/<Mes>/<día>/`, en la carpeta del proyecto. El de la mañana tiene dos páginas; los demás, una. Ningún texto se recorta: si algo no cabe ni con letra pequeña, el informe ocupa una página más |
@@ -147,7 +177,9 @@ Desde el 24 nov de 2026 la apertura **analiza el mercado siempre**, haya o no
 - Puede hacer **una compra que no estaba en el plan**, solo entre los valores
   que la mañana dejó en vigilancia y solo si ha pasado hoy algo concreto. Pasa
   por las mismas reglas que cualquier compra y sale con "por qué", "esperamos
-  que" y "saldríamos si". El tope sigue siendo de dos compras al día.
+  que" y "saldríamos si". A esta compra se le exige la proporción completa
+  entre ganancia y riesgo (1,5 veces). El tope es de tres compras al día
+  (`max_compras_dia`), contando las del plan.
 - Si no se compra nada, dice por qué.
 - Un stop solo se sube si queda al menos a `stop_min_pct` del precio.
 

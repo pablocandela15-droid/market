@@ -89,12 +89,12 @@ Las herramientas de datos de `day-trader-skill` se usan desde `../repos/`, sin c
 
 Están en `config/reglas.json` y las aplica el código, no el modelo:
 
-- Riesgo del 1 % de la cartera por operación, con stop obligatorio.
-- Máximo 5 posiciones; ninguna por encima del 25 % de la cartera.
-- El objetivo debe ganar al menos 1,5 veces lo que arriesga el stop.
+- Riesgo del 1,5 % de la cartera por operación, con stop obligatorio.
+- Máximo 5 posiciones; ninguna por encima del 30 % de la cartera. Como mucho 3 compras al día.
+- El objetivo debe ganar al menos 1,5 veces lo que arriesga el stop en el plan de la mañana. En la apertura, con el precio real, basta con 1,2 veces.
 - Stop entre el 2 % y el 15 % del precio de entrada.
-- No se compra con PEG por encima de 2, sin datos de valoración, ni a 2 días o menos de presentar resultados.
-- En la apertura se descarta la orden si el precio se ha ido más de un 3 % por encima de lo previsto.
+- No se compra con PEG por encima de 2,5, sin datos de valoración, ni a 2 días o menos de presentar resultados.
+- En la apertura se descarta la orden si el precio se ha ido más de un 4 % por encima de lo previsto.
 - Solo compras: sin ventas en corto, margen ni opciones.
 
 ## Seguridad

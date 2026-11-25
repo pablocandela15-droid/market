@@ -23,6 +23,12 @@ REGLAS = {
     "valoracion": {"peg_maximo": 2.0, "permitir_sin_beneficios": True, "dias_sin_comprar_antes_de_resultados": 2},
 }
 BARATA = {"per": 15.0, "per_futuro": 12.0, "peg": 0.9, "resultados": None}
+# Perfil agresivo (25 nov de 2026): las cifras de config/reglas.json que cambian respecto a las de arriba.
+AGRESIVAS = {
+    "riesgo": dict(REGLAS["riesgo"], riesgo_por_operacion_pct=1.5, max_posicion_pct=30, max_compras_dia=3,
+                   min_recompensa_riesgo_apertura=1.2, max_hueco_apertura_pct=4),
+    "valoracion": dict(REGLAS["valoracion"], peg_maximo=2.5),
+}
 
 
 def res(valor=1000.0, caja=1000.0, posiciones=(), huecos=5):
@@ -279,3 +285,53 @@ class PorQueEnLaApertura(unittest.TestCase):
         h = tarea._lo_hecho_en_la_apertura([], False, "el mercado abre débil y ningún valor vigilado ha dado señal")
         self.assertIn("No había ninguna compra prevista y no se ha hecho ninguna.", h)
         self.assertIn("El mercado abre débil y ningún valor vigilado ha dado señal.", h)
+
+
+class PerfilAgresivo(unittest.TestCase):
+    """Más riesgo por operación y menos compras del plan perdidas en la apertura."""
+
+    def v(self, precio=None, previsto=True, val=BARATA, **o):
+        return ordenes.validar(orden(**o), res(), val, precio, AGRESIVAS, previsto=previsto)
+
+    def test_arriesga_el_uno_y_medio_por_ciento(self):
+        cantidad, _ = ordenes.dimensionar(100.0, 94.0, res(), AGRESIVAS)       # 15 $ de riesgo / 6 $ por acción = 2,5
+        self.assertEqual(cantidad, 2)
+        cantidad, nota = ordenes.dimensionar(100.0, 97.0, res(), AGRESIVAS)    # pediría 5 acciones = 500 $
+        self.assertEqual(cantidad, 3)
+        self.assertIn("30", nota)
+
+    def test_abrir_algo_mas_cara_ya_no_tira_la_compra_prevista(self):
+        # El caso de PG&E del 24 nov: plan a 14,08 $, abre a 14,20 $ y gana 1,3 veces lo arriesgado.
+        pge = dict(entrada=14.08, stop=13.30, objetivo=15.40)
+        self.assertEqual(self.v(14.20, **pge)[0], "APROBADA")
+        self.assertEqual(ordenes.validar(orden(**pge), res(), BARATA, 14.20, REGLAS)[0], "BLOQUEADA")   # con las reglas de antes
+        veredicto, motivos, _ = self.v(14.40, **pge)                           # tan cara que ya no gana ni 1,2 veces
+        self.assertEqual(veredicto, "BLOQUEADA")
+        self.assertIn("se exige al menos 1,2", motivos[0])
+
+    def test_a_la_compra_no_prevista_se_le_exige_la_proporcion_completa(self):
+        self.assertEqual(self.v(100.0, previsto=True, objetivo=106.5)[0], "APROBADA")     # 1,3 veces: vale si venía en el plan
+        self.assertEqual(self.v(100.0, previsto=False, objetivo=106.5)[0], "BLOQUEADA")
+        self.assertEqual(self.v(100.0, previsto=False, objetivo=108.0)[0], "APROBADA")    # 1,6 veces
+
+    def test_la_manana_sigue_pidiendo_uno_y_medio(self):
+        self.assertEqual(self.v(objetivo=106.5)[0], "BLOQUEADA")
+        self.assertTrue(any("margen justo" in x for x in self.v(objetivo=108.0)[1]))      # un 1 % más cara: 1,17 veces
+        self.assertFalse(any("margen justo" in x for x in self.v(objetivo=109.0)[1]))     # un 1 % más cara: 1,33 veces
+
+    def test_admite_valoraciones_y_huecos_algo_mayores(self):
+        cara = dict(BARATA, peg=2.3)
+        self.assertEqual(self.v(val=cara)[0], "APROBADA")
+        self.assertEqual(ordenes.validar(orden(), res(), cara, None, REGLAS)[0], "BLOQUEADA")
+        lejos = dict(objetivo=125.0)                                           # abre un 3,5 % por encima de lo previsto
+        self.assertEqual(self.v(103.5, **lejos)[0], "APROBADA")
+        self.assertEqual(ordenes.validar(orden(**lejos), res(), BARATA, 103.5, REGLAS)[0], "BLOQUEADA")
+
+    def test_las_reglas_en_vigor_son_las_del_perfil_agresivo(self):
+        r = ordenes.reglas()
+        for k, v in AGRESIVAS["riesgo"].items():
+            self.assertEqual(r["riesgo"][k], v, k)
+        self.assertEqual(r["valoracion"]["peg_maximo"], 2.5)
+        self.assertEqual(r["riesgo"]["max_posiciones"], 5)                     # lo que no cambia
+        self.assertEqual(r["valoracion"]["dias_sin_comprar_antes_de_resultados"], 2)
+        self.assertFalse(r["operativa"]["margen"] or r["operativa"]["cortos"] or r["operativa"]["opciones"])

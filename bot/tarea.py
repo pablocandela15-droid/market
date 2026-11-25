@@ -655,7 +655,7 @@ def apertura(a):
             cambios.append(dict(ficha, que="no comprada", por_que="No se ha podido leer su precio de hoy, y sin precio no se compra."))
             return False
         try:
-            veredicto, motivos, cantidad = ordenes.validar(o, _resumen(c, d), d["valoracion"].get(t), precio)
+            veredicto, motivos, cantidad = ordenes.validar(o, _resumen(c, d), d["valoracion"].get(t), precio, previsto=previsto)
             if veredicto != "APROBADA":
                 cambios.append(dict(ficha, que="no comprada", por_que=_frase("; ".join(motivos))))
                 return False
@@ -671,6 +671,8 @@ def apertura(a):
         return True
 
     compras = 0
+    tope_dia = reglas()["riesgo"].get("max_compras_dia", 2)
+    ya_hechas = "Hoy ya se han hecho las %d compras que se permiten al día." % tope_dia
     if abierto:
         for o in [x for x in aprobadas if x.get("accion") == "vender"]:        # primero las ventas: liberan caja
             t = o["ticker"].upper()
@@ -687,11 +689,12 @@ def apertura(a):
         for o in [x for x in aprobadas if x.get("accion") != "vender"]:
             t = o["ticker"].upper()
             que, por_que = decision.get(t, ("ejecutar", ""))
-            if que != "ejecutar":
+            if que != "ejecutar" or compras >= tope_dia:
                 cambios.append({"ticker": t, "que": "no comprada", "previsto": True, "entrada_prevista": o.get("entrada"),
                                 "stop": o.get("stop"), "objetivo": o.get("objetivo"),
                                 "precio": (sesion.get(t) or {}).get("ultimo") or precios.get(t),
-                                "por_que": _frase(por_que) or "Se descartó al revisar la apertura."})
+                                "por_que": (_frase(por_que) or "Se descartó al revisar la apertura.") if que != "ejecutar"
+                                else ya_hechas})
                 continue
             compras += comprar(o, True, por_que if revisado else "")
         permitidos = {v["ticker"] for v in vigilados}
@@ -702,8 +705,8 @@ def apertura(a):
             if t not in permitidos:
                 cambios.append(dict(base, por_que="Fuera del plan, en la apertura solo se puede comprar un valor que el "
                                                   "informe de la mañana dejó en vigilancia, y este no lo estaba."))
-            elif compras >= 2:
-                cambios.append(dict(base, por_que="Hoy ya se han hecho las dos compras que se permiten al día."))
+            elif compras >= tope_dia:
+                cambios.append(dict(base, por_que=ya_hechas))
             else:
                 compras += comprar(o, False)
     else:
