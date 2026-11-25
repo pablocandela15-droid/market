@@ -271,7 +271,10 @@ def construir(tarea):
     else:
         plan = leer_json(carpeta_del_dia("datos") / "plan.json", {})
         del_plan = [o["ticker"].upper() for o in plan.get("ordenes", []) if o.get("ticker")]
-        interes = list(dict.fromkeys(fijos + del_plan))
+        # En la apertura se miran además los valores que la mañana dejó en vigilancia: son los únicos
+        # que se pueden comprar fuera del plan.
+        vigilados = [v["ticker"].upper() for v in plan.get("vigilados") or [] if v.get("ticker")] if tarea == "apertura" else []
+        interes = list(dict.fromkeys(fijos + del_plan + vigilados))
         filas = {}
         velas = series_completas(interes, filas, errores)
         val = valoraciones([t for t in interes if t in filas], errores)
@@ -280,7 +283,7 @@ def construir(tarea):
     precios = {t: f["precio"] for t, f in filas.items()}
     if tarea != "manana" and d["mercado_hoy"]["abre_hoy"]:
         d["sesion_de_hoy"] = {}
-        for t in dict.fromkeys(en_cartera + del_plan):
+        for t in dict.fromkeys(en_cartera + del_plan + vigilados):
             try:
                 d["sesion_de_hoy"][t] = yahoo.intradia(t)
                 precios[t] = d["sesion_de_hoy"][t]["ultimo"]

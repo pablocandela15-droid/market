@@ -43,6 +43,11 @@ def dimensionar(entrada, stop, res, r=None):
     return cantidad, "; ".join(notas)
 
 
+def _n(x, dec=2):
+    """Número con coma decimal, para los textos que lee el dueño de la cartera."""
+    return ("%.*f" % (dec, x)).replace(".", ",")
+
+
 def validar(orden, res, valoracion, precio_actual=None, r=None):
     """Devuelve (veredicto, motivos, cantidad). veredicto: 'APROBADA' o 'BLOQUEADA'.
 
@@ -69,22 +74,43 @@ def validar(orden, res, valoracion, precio_actual=None, r=None):
         return "BLOQUEADA", motivos + ["faltan entrada, stop u objetivo"], 0
     if not stop < entrada < objetivo:
         return "BLOQUEADA", motivos + ["el stop debe quedar por debajo de la entrada y el objetivo por encima"], 0
+    escapado = False
     if precio_actual:
         if precio_actual > entrada * (1 + rr["max_hueco_apertura_pct"] / 100):
-            motivos.append("el precio se ha escapado: %.2f frente a %.2f de entrada prevista" % (precio_actual, entrada))
+            escapado = True
+            motivos.append("cotiza a %s $, un %s %% por encima de los %s $ a los que se pensaba comprar; el plan "
+                           "admite como mucho un %s %%, porque comprar más caro deja menos ganancia para el mismo riesgo"
+                           % (_n(precio_actual), _n((precio_actual / entrada - 1) * 100, 1), _n(entrada),
+                              ("%g" % rr["max_hueco_apertura_pct"]).replace(".", ",")))
         if precio_actual <= stop:
-            motivos.append("el precio ya está en el stop o por debajo")
+            return "BLOQUEADA", motivos + ["cotiza a %s $, ya en el nivel de venta de protección (%s $) o por debajo: la caída "
+                                           "que el plan quería evitar ya ha ocurrido" % (_n(precio_actual), _n(stop))], 0
         entrada = precio_actual
         if not stop < entrada < objetivo:
-            return "BLOQUEADA", motivos + ["con el precio actual, la operación ya no tiene sentido"], 0
+            return "BLOQUEADA", motivos + ["cotiza a %s $, ya en el objetivo del plan (%s $) o por encima: no queda recorrido "
+                                           "que ganar" % (_n(precio_actual), _n(objetivo))], 0
     dist = (entrada - stop) / entrada * 100
     if dist < rr["stop_min_pct"]:
         motivos.append("stop demasiado cerca (%.1f %%)" % dist)
     if dist > rr["stop_max_pct"]:
         motivos.append("stop demasiado lejos (%.1f %%)" % dist)
     rb = (objetivo - entrada) / (entrada - stop)
-    if rb < rr["min_recompensa_riesgo"]:
-        motivos.append("gana %.1f por cada 1 que arriesga; el mínimo es %.1f" % (rb, rr["min_recompensa_riesgo"]))
+    if rb < rr["min_recompensa_riesgo"] and escapado:
+        pass        # ya está dicho: se ha encarecido más de lo admitido
+    elif rb < rr["min_recompensa_riesgo"]:
+        if precio_actual:
+            motivos.append("cotiza a %s $ y se pensaba comprar a %s $. A ese precio se arriesgan %s $ por acción hasta el stop "
+                           "(%s $) para ganar %s $ hasta el objetivo (%s $): %s veces lo arriesgado, y el plan exige al menos %s"
+                           % (_n(precio_actual), _n(float(orden["entrada"])), _n(entrada - stop), _n(stop), _n(objetivo - entrada),
+                              _n(objetivo), _n(rb, 1), _n(rr["min_recompensa_riesgo"], 1)))
+        else:
+            motivos.append("ganaría %s por cada 1 que arriesga; el mínimo es %s" % (_n(rb, 1), _n(rr["min_recompensa_riesgo"], 1)))
+    elif not precio_actual:
+        # Margen justo: si abre solo un 1 % más cara, la proporción ya no llega al mínimo y la orden se quedará sin lanzar.
+        caro = entrada * 1.01
+        if (objetivo - caro) / (caro - stop) < rr["min_recompensa_riesgo"]:
+            avisos.append("margen justo: si abre un 1 %% por encima de %s $, ya no ganará %s veces lo que arriesga y no se comprará"
+                          % (_n(entrada), _n(rr["min_recompensa_riesgo"], 1)))
     if not valoracion:
         motivos.append("sin datos de valoración")
     else:

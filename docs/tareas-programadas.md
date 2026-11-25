@@ -134,6 +134,27 @@ Las estimaciones se sustituyen solas por la media real de las últimas cinco eje
 
 ## Tarea 2 · 15:45 · Apertura
 
+Desde el 24 nov de 2026 la apertura **analiza el mercado siempre**, haya o no
+órdenes en el plan, y **explica cada diferencia con el plan de la mañana**:
+
+- Busca en la web (2 a 4 búsquedas) lo ocurrido desde las 7:00: datos
+  económicos de las 14:30 y noticias de los valores del plan, de la cartera y
+  de los vigilados.
+- Una compra prevista que no se hace sale con su porqué en claro, lo decida el
+  análisis (una noticia, un dato) o lo impidan las reglas al precio real. Por
+  ejemplo, el 24 nov PG&E no se compró: se pensaba comprar a 14,08 $ y cotizaba
+  a 14,20 $, y a ese precio ya solo ganaba 1,3 veces lo que arriesgaba.
+- Puede hacer **una compra que no estaba en el plan**, solo entre los valores
+  que la mañana dejó en vigilancia y solo si ha pasado hoy algo concreto. Pasa
+  por las mismas reglas que cualquier compra y sale con "por qué", "esperamos
+  que" y "saldríamos si". El tope sigue siendo de dos compras al día.
+- Si no se compra nada, dice por qué.
+- Un stop solo se sube si queda al menos a `stop_min_pct` del precio.
+
+Todo eso va en la sección "Qué se ha hecho y por qué" del PDF y en
+`datos/AAAA-MM-DD/apertura.json` (campo `cambios`), que también lee el cierre.
+Cuesta unos 0,12 $ por día (antes 0,06 $).
+
 **Días:** lunes a viernes con mercado abierto. **Modelo:** Sonnet 5.5.
 
 ### Casos de uso

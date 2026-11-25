@@ -234,3 +234,48 @@ class ExcepcionDeUnDia(unittest.TestCase):
         self.assertEqual((domingo["modelo"], domingo["tope_usd"], domingo["max_rondas"]), ("claude-sonnet-5-5", 32.0, 48))
         self.assertEqual((siguiente["modelo"], siguiente["tope_usd"], siguiente["max_rondas"]), ("claude-haiku-5-5", 9.0, 120))
         self.assertNotIn("solo_el", domingo)
+
+
+
+class PorQueEnLaApertura(unittest.TestCase):
+    """Cuando la apertura no hace lo previsto, o hace algo no previsto, el informe dice por qué."""
+
+    def v(self, precio=None, **o):
+        return ordenes.validar(orden(**o), res(), BARATA, precio, REGLAS)
+
+    def test_precio_algo_mas_caro_ya_no_compensa(self):
+        # entrada 100, stop 95, objetivo 108: gana 1,6 veces lo arriesgado; a 100,50 ya solo 1,36
+        veredicto, motivos, _ = self.v(100.5, objetivo=108.0)
+        self.assertEqual(veredicto, "BLOQUEADA")
+        self.assertIn("se arriesgan 5,50 $ por acción", motivos[0])
+        self.assertIn("para ganar 7,50 $", motivos[0])
+        self.assertIn("exige al menos 1,5", motivos[0])
+
+    def test_precio_escapado_y_precio_en_el_stop(self):
+        self.assertIn("por encima de los 100,00 $", self.v(104.0)[1][0])
+        self.assertEqual(len(self.v(104.0)[1]), 1)                       # un solo motivo, no dos que digan lo mismo
+        self.assertIn("venta de protección", self.v(94.0)[1][0])
+
+    def test_la_manana_avisa_si_el_margen_es_justo(self):
+        veredicto, avisos, _ = self.v(objetivo=108.0)
+        self.assertEqual(veredicto, "APROBADA")
+        self.assertTrue(any("margen justo" in x for x in avisos))
+        self.assertFalse(any("margen justo" in x for x in self.v(objetivo=112.0)[1]))
+
+    def test_el_informe_distingue_lo_previsto_de_lo_no_previsto(self):
+        h = tarea._lo_hecho_en_la_apertura([
+            {"ticker": "AAA", "que": "no comprada", "previsto": True, "entrada_prevista": 10.0, "precio": 10.4, "stop": 9.5,
+             "objetivo": 11.0, "por_que": "Se ha encarecido."},
+            {"ticker": "BBB", "que": "comprada", "previsto": False, "cantidad": 3, "precio": 20.0, "importe_usd": 60.0, "stop": 19.0,
+             "objetivo": 23.0, "por_que": "Ha superado su máximo.", "que_esperamos": "Esperamos que siga.", "cuando_saldriamos": "Saldríamos si cae."}],
+            True, "")
+        self.assertIn("AAA · no se ha comprado, aunque estaba en el plan", h)
+        self.assertIn("Se ha encarecido.", h)
+        self.assertIn("BBB · comprada, aunque no estaba en el plan de la mañana", h)
+        self.assertIn("<b>Esperamos</b> que siga.", h)
+        self.assertNotIn("No había ninguna compra prevista", h)
+
+    def test_sin_compras_previstas_ni_hechas_tambien_se_explica(self):
+        h = tarea._lo_hecho_en_la_apertura([], False, "el mercado abre débil y ningún valor vigilado ha dado señal")
+        self.assertIn("No había ninguna compra prevista y no se ha hecho ninguna.", h)
+        self.assertIn("El mercado abre débil y ningún valor vigilado ha dado señal.", h)

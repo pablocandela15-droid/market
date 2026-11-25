@@ -17,6 +17,14 @@ Nota de relevo: si una sesión se corta, aquí está lo necesario para seguir.
 
 ## Hecho el 24 nov por la mañana
 
+- **La apertura analiza el mercado y explica cada cambio de plan** (`apertura`,
+  `_lo_hecho_en_la_apertura` en `bot/tarea.py`; `tareas/guiones/apertura.md`):
+  por qué no se hace una compra prevista, y por qué se hace una que no lo
+  estaba (solo entre los vigilados de la mañana). Pedido por el usuario el 24
+  nov tras ver que PG&E no se compró y el informe no lo explicaba. La mañana
+  avisa además cuando una orden tiene el margen justo.
+- **En modo de prueba (`BOT_PRUEBA=1`) el bot ya no puede enviar órdenes a
+  Alpaca**: antes los ensayos de la apertura habrían llegado al bróker.
 - **Reparto del crédito entre las mañanas** (`elegir_nivel` en `bot/gasto.py`):
   días sin mercado en nivel medio como mucho y nivel alto para los días de
   mercado, los lunes primero. Pedido por el usuario el 24 nov.
@@ -71,7 +79,7 @@ Nota de relevo: si una sesión se corta, aquí está lo necesario para seguir.
 6. Agentes de MiroFish con Sonnet: descartado por coste con los datos medidos
    (unos 58 $ por simulación). Alternativa por explorar: recortar lo que cada
    agente relee del hilo.
-7. En git: todo confirmado y subido el 24 nov (noticias del mundo, informe de
-   dos páginas sin recortes, red tipo Twitter, reparto por minuto del puente,
-   tope de MiroFish a 9 $, reparto del crédito entre las mañanas y la excepción
-   del 29 nov).
+7. En git: confirmado y subido hasta `393779f` (24 nov). Lo posterior (la
+   apertura que analiza y explica) está sin confirmar.
+8. Primera apertura automática con el código nuevo: miércoles 25 nov a las
+   15:45. Revisar su informe.

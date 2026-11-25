@@ -12,7 +12,7 @@ Una orden que no las cumpla se bloquea, así que no la propongas:
 
 - Solo empresas del S&P 500 o de los temas, que no estén ya en cartera, y sin superar el máximo de posiciones (`cartera.huecos_libres`). Lo normal es elegir entre `valores_en_detalle`, que son los que hoy tienen datos completos; si propones otro, el código buscará su valoración.
 - `stop` por debajo de `entrada` y `objetivo` por encima. Distancia al stop entre `reglas.riesgo.stop_min_pct` y `stop_max_pct`.
-- El objetivo debe ganar al menos `min_recompensa_riesgo` veces lo que arriesga el stop.
+- El objetivo debe ganar al menos `min_recompensa_riesgo` veces lo que arriesga el stop. **Deja margen:** esa proporción se vuelve a calcular a las 15:45 con el precio real, y si el valor abre un poco más caro deja de cumplirse y la orden no se lanza. Elige stop y objetivo de modo que siga cumpliéndose aunque abra un 1 o un 2 % por encima de `entrada` (en la práctica, apunta a ganar al menos 1,8 veces lo arriesgado).
 - PEG por encima de `reglas.valoracion.peg_maximo`: no se compra. Sin datos en `valoracion`: no se compra.
 - No se compra si presenta resultados en los próximos `dias_sin_comprar_antes_de_resultados` días.
 - El tamaño lo calcula el código para arriesgar el 1 %: tú no lo decides.

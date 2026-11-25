@@ -61,10 +61,13 @@ ESQ_ESTRATEGA = _obj(
     noticias_clave=_lista(_obj(titular=S, impacto=S)),
     agenda=_lista(S), riesgos=_lista(S))
 ESQ_APERTURA = _obj(
+    comentario=S,
     decisiones=_lista(_obj(ticker=S, decision=_op("ejecutar", "descartar"), motivo=S)),
+    compra_nueva=_lista(_obj(ticker=S, entrada=N, stop=N, objetivo=N, motivo=S, por_que=S, que_esperamos=S,
+                             cuando_saldriamos=S)),
+    sin_compras=S,
     stops=_lista(_obj(ticker=S, nuevo_stop=N, motivo=S)),
-    ventas=_lista(_obj(ticker=S, motivo=S)),
-    comentario=S)
+    ventas=_lista(_obj(ticker=S, motivo=S)))
 ESQ_CIERRE = _obj(resumen=S, aciertos=_lista(S), fallos=_lista(S), lecciones=_lista(S), avisos_manana=_lista(S))
 
 
@@ -113,6 +116,13 @@ def _vigilar(c, velas, api, avisos):
 def _subir_stop(c, ticker, nuevo, precio, api, avisos):
     p = c["posiciones"].get(ticker)
     if not p or not nuevo or nuevo <= p["stop"] or (precio and nuevo >= precio):
+        return False
+    # Un stop pegado al precio convierte un vaivén normal en una venta: se le exige la misma
+    # distancia mínima que a una compra nueva.
+    minimo = reglas()["riesgo"]["stop_min_pct"]
+    if precio and (precio - float(nuevo)) / precio * 100 < minimo:
+        avisos.append("no se sube el stop de %s a %s $: quedaría a menos de un %s %% del precio" % (
+            ticker, inf.num(nuevo), ("%g" % minimo).replace(".", ",")))
         return False
     p["stop"] = round(float(nuevo), 2)
     if api and p.get("stop_en_broker") and p.get("orden_id"):
@@ -280,6 +290,23 @@ def _postura(tono):
     return {"defensivo": "defensiva", "riesgo": "ofensiva", "neutral": "neutral"}.get((tono or "").lower(), tono or "sin análisis")
 
 
+def _parrafo_con_porque(titulo, detalle, x, extra="", etiqueta_porque="Por qué"):
+    """Un párrafo del informe: qué se hace con un valor y, debajo, por qué, qué esperamos y cuándo saldríamos."""
+    lineas = ["<b>%s</b> <span class='gris'>%s</span>" % (titulo, detalle)]
+    # Si la frase ya empieza por "Esperamos que…" o "Saldríamos si…", se resalta ese arranque
+    # en vez de repetirlo como etiqueta.
+    for etiqueta, clave, arranque in ((etiqueta_porque, "por_que", None), ("Qué esperamos", "que_esperamos", "Esperamos"),
+                                      ("Saldríamos si", "cuando_saldriamos", "Saldríamos")):
+        texto = (x.get(clave) or "").strip()
+        if not texto:
+            continue
+        if arranque and texto.startswith(arranque + " "):
+            lineas.append("<b>%s</b>%s" % (arranque, inf.e(texto[len(arranque):])))
+        else:
+            lineas.append("<b>%s:</b> %s" % (etiqueta, inf.e(texto)))
+    return "<p>%s%s</p>" % ("<br>".join(lineas), extra)
+
+
 def _que_hacemos(d, plan):
     """Lo que se hace hoy con cada valor y por qué, en claro: compras, ventas, lo que se mantiene y el valor prioritario."""
     c, u = d["cartera"], d["universo"]
@@ -287,19 +314,7 @@ def _que_hacemos(d, plan):
     decisiones = {x["ticker"].upper(): x for x in plan.get("posiciones", [])}
 
     def parrafo(titulo, detalle, x, extra=""):
-        lineas = ["<b>%s</b> <span class='gris'>%s</span>" % (titulo, detalle)]
-        # Si la frase ya empieza por "Esperamos que…" o "Saldríamos si…", se resalta ese arranque
-        # en vez de repetirlo como etiqueta.
-        for etiqueta, clave, arranque in (("Por qué", "por_que", None), ("Qué esperamos", "que_esperamos", "Esperamos"),
-                                          ("Saldríamos si", "cuando_saldriamos", "Saldríamos")):
-            texto = (x.get(clave) or "").strip()
-            if not texto:
-                continue
-            if arranque and texto.startswith(arranque + " "):
-                lineas.append("<b>%s</b>%s" % (arranque, inf.e(texto[len(arranque):])))
-            else:
-                lineas.append("<b>%s:</b> %s" % (etiqueta, inf.e(texto)))
-        return "<p>%s%s</p>" % ("<br>".join(lineas), extra)
+        return _parrafo_con_porque(titulo, detalle, x, extra)
     partes = []
     for o in plan["ordenes"]:
         t = o["ticker"]
@@ -496,6 +511,77 @@ def manana(a):
 
 # ---------------------------------------------------------------- 15:45 apertura
 
+def _frase(texto):
+    """Primera letra en mayúscula y punto final."""
+    texto = (texto or "").strip()
+    return (texto[:1].upper() + texto[1:]).rstrip(".") + "." if texto else ""
+
+
+def _vigilados_de_hoy(d):
+    """Los valores que la mañana dejó en vigilancia, con lo que hacen hoy. Son los únicos que la
+    apertura puede comprar fuera del plan."""
+    plan, ses, val, u = d.get("plan_de_la_manana") or {}, d.get("sesion_de_hoy") or {}, d.get("valoracion") or {}, d.get("universo") or {}
+    fuera = {o["ticker"].upper() for o in plan.get("ordenes", []) if o.get("ticker")} | {p["ticker"] for p in d["cartera"]["posiciones"]}
+    out = []
+    for v in plan.get("vigilados") or []:
+        t = (v.get("ticker") or "").upper()
+        if not t or t in fuera or t not in u:
+            continue
+        out.append({"ticker": t, "empresa": u[t].get("empresa"), "por_que_se_vigila": v.get("por_que"), "ficha": _fila_corta(u[t]),
+                    "sesion": ses.get(t), "valoracion": val.get(t)})
+    return out
+
+
+def _lo_hecho_en_la_apertura(cambios, habia_compras, sin_compras):
+    """Qué se ha hecho en la apertura y por qué, valor a valor: lo previsto que se cumple, lo previsto que
+    no, y lo que se hace sin estar en el plan."""
+    def cifras(x):
+        partes = []
+        if x.get("cantidad"):
+            n = x["cantidad"]
+            partes.append("%s acciones a %s $ (%s)" % (inf.num(n, 0 if n == int(n) else 4), inf.num(x.get("precio")), inf.dinero(x.get("importe_usd"))))
+        elif x.get("que") == "no comprada":
+            if x.get("entrada_prevista"):
+                partes.append("entrada prevista %s $" % inf.num(x["entrada_prevista"]))
+            if x.get("precio"):
+                partes.append("ahora %s $" % inf.num(x["precio"]))
+        if x.get("stop") and x.get("que") in ("comprada", "no comprada"):
+            partes.append("stop %s $ · objetivo %s $" % (inf.num(x["stop"]), inf.num(x.get("objetivo"))))
+        if x.get("detalle"):
+            partes.append(x["detalle"])
+        return inf.e(" · ".join(partes))
+    titulos = {("comprada", True): "comprada, como estaba previsto", ("comprada", False): "comprada, aunque no estaba en el plan de la mañana",
+               ("no comprada", True): "no se ha comprado, aunque estaba en el plan", ("no comprada", False): "se valoró comprarla fuera del plan y no se ha hecho",
+               ("vendida", True): "vendida, como estaba previsto", ("vendida", False): "vendida, aunque no estaba previsto",
+               ("no vendida", True): "no se ha podido vender", ("no vendida", False): "no se ha podido vender",
+               ("stop subido", False): "se sube el stop"}
+    partes = []
+    for x in cambios:
+        previsto = bool(x.get("previsto"))
+        titulo = "%s · %s" % (inf.e(x["ticker"]), titulos.get((x["que"], previsto), x["que"]))
+        etiqueta = "Por qué se mantiene el plan" if (x["que"], previsto) == ("comprada", True) else "Por qué"
+        partes.append(_parrafo_con_porque(titulo, cifras(x), x, etiqueta_porque=etiqueta))
+    if not any(x["que"] in ("comprada", "no comprada") for x in cambios):
+        partes.append("<p><b>%s</b> %s</p>" % (
+            "No había ninguna compra prevista y no se ha hecho ninguna." if not habia_compras else "Hoy no se ha comprado nada.",
+            inf.e(_frase(sin_compras))))
+    return "<h2>Qué se ha hecho y por qué</h2>" + "".join(partes)
+
+
+def _pdf_apertura(d, res, comentario, cambios, habia_compras, sin_compras, hechos, costes, avisos, momento=None):
+    cuerpo = [inf.bloque_cartera(res)]
+    if comentario:
+        cuerpo.append("<h2>Cómo ha abierto</h2><p>%s</p>" % inf.e(comentario))
+    cuerpo.append(_lo_hecho_en_la_apertura(cambios, habia_compras, sin_compras))
+    cuerpo.append("<h2>Mercado a las %s</h2>%s" % (d["hora_madrid"], inf.bloque_indices(
+        d["indices"], ["S&P 500", "Nasdaq 100", "Russell 2000", "VIX", "Euro/dólar"])))
+    cuerpo.append("<h2>Operaciones lanzadas</h2>" + inf.bloque_operaciones(
+        hechos, "No se ha lanzado ninguna operación."))
+    cuerpo.append("<h2>Posiciones tras la apertura</h2>" + inf.bloque_posiciones(res))
+    return inf.componer("Apertura", _fecha_larga(momento or ahora_madrid()), _chips(d, costes),
+                        "".join(cuerpo), _pie(avisos), carpeta_informes() / "1545-apertura.pdf")
+
+
 def apertura(a):
     d, velas, c = dossier.construir("apertura")
     avisos = d["avisos_de_datos"]
@@ -506,75 +592,136 @@ def apertura(a):
     hechos = _vigilar(c, velas, api, avisos)
     plan = d.get("plan_de_la_manana") or {}
     aprobadas = [o for o in plan.get("ordenes", []) if o.get("veredicto") == "APROBADA"]
+    habia_compras = any(o.get("accion") != "vender" for o in aprobadas)
     sesion, precios = d.get("sesion_de_hoy") or {}, _precios(d)
-    descartadas, costes, comentario = [], [], ""
+    cambios, costes, comentario, sin_compras, nuevas = [], [], "", "", []
     abierto = d["mercado_hoy"]["abierto_ahora"] or a.forzar
-    decision = {o["ticker"]: ("ejecutar", "") for o in aprobadas}
+    decision = {o["ticker"].upper(): ("ejecutar", "") for o in aprobadas}
+    vigilados = _vigilados_de_hoy(d)
     via = d["via"] = None if a.sin_modelo else modelo.autenticacion()
+    revisado = False
     if not abierto:
         avisos.append("la tarea se ha ejecutado con el mercado cerrado: no se lanza ninguna orden")
-    elif (aprobadas or c["posiciones"]) and via and (via == "plan" or gasto.cabe("apertura")):
+    elif via and (via == "plan" or gasto.cabe("apertura")):
+        # La apertura analiza el mercado siempre, haya o no órdenes en el plan.
         r = reglas()
         datos = {k: d.get(k) for k in ("generado", "mercado_hoy", "indices", "plan_de_la_manana", "sesion_de_hoy",
                                        "noticias", "cartera", "valoracion", "mirofish")}
+        datos["valores_en_vigilancia"] = vigilados
+        datos["reglas"] = {"riesgo": r["riesgo"], "valoracion": r["valoracion"]}
+        # Lo que las reglas ya impiden al precio de ahora, para que el análisis no cuente con ello.
+        bloqueos = {}
+        for o in aprobadas:
+            t = o["ticker"].upper()
+            precio = (sesion.get(t) or {}).get("ultimo") or precios.get(t)
+            if o.get("accion") != "vender" and precio:
+                veredicto, motivos, _ = ordenes.validar(o, d["cartera"], d["valoracion"].get(t), precio)
+                if veredicto != "APROBADA":
+                    bloqueos[t] = "; ".join(motivos)
+        datos["ordenes_que_las_reglas_ya_impiden"] = bloqueos
         resp, info = modelo.preguntar("apertura", "apertura", r["modelos"]["apertura"], datos, ESQ_APERTURA,
-                                      nivel="apertura", tope_usd=r["credito_api"]["tope_por_llamada_usd"]["apertura"],
-                                      esfuerzo="medium", espera=420, carpeta=carpeta_del_dia("datos"))
+                                      nivel="apertura", web=True, tope_usd=r["credito_api"]["tope_por_llamada_usd"]["apertura"],
+                                      esfuerzo="medium", espera=480, carpeta=carpeta_del_dia("datos"))
         costes.append(info)
         if resp:
-            comentario = resp.get("comentario", "")
+            revisado = True
+            comentario, sin_compras = resp.get("comentario", ""), resp.get("sin_compras", "")
             for x in resp.get("decisiones", []):
                 decision[x["ticker"].upper()] = (x["decision"], x.get("motivo", ""))
             for x in resp.get("stops", []):
                 t = x["ticker"].upper()
+                anterior = (c["posiciones"].get(t) or {}).get("stop")
                 if _subir_stop(c, t, x.get("nuevo_stop"), precios.get(t), api, avisos):
                     hechos.append({"hora": ahora_madrid().strftime("%H:%M"), "ticker": t, "accion": "stop subido",
                                    "cantidad": 0, "precio": x["nuevo_stop"], "importe_usd": 0, "motivo": x.get("motivo", "")})
+                    cambios.append({"ticker": t, "que": "stop subido", "previsto": False, "por_que": _frase(x.get("motivo")),
+                                    "detalle": "de %s $ a %s $" % (inf.num(anterior), inf.num(x["nuevo_stop"]))})
             for x in resp.get("ventas", []):
                 if x["ticker"].upper() in c["posiciones"]:
-                    aprobadas.append({"ticker": x["ticker"].upper(), "accion": "vender", "motivo": x.get("motivo", "")})
+                    aprobadas.append({"ticker": x["ticker"].upper(), "accion": "vender", "motivo": x.get("motivo", ""), "nueva": True})
+            nuevas = [dict(x, accion="comprar") for x in (resp.get("compra_nueva") or [])][:1]
         else:
             avisos.append("la revisión del modelo falló (%s): se aplican solo las reglas" % info.get("error", ""))
+    elif via:
+        avisos.append("no queda crédito para el análisis de la apertura: se aplican solo las reglas")
+
+    def comprar(o, previsto, por_que_seguimos=""):
+        """Compra si las reglas lo permiten al precio de ahora. Anota lo que pasa y por qué. Devuelve True si compró."""
+        t = o["ticker"].upper()
+        precio = (sesion.get(t) or {}).get("ultimo") or precios.get(t)
+        ficha = {"ticker": t, "previsto": previsto, "entrada_prevista": o.get("entrada"), "stop": o.get("stop"),
+                 "objetivo": o.get("objetivo"), "precio": precio}
+        if not precio:
+            cambios.append(dict(ficha, que="no comprada", por_que="No se ha podido leer su precio de hoy, y sin precio no se compra."))
+            return False
+        try:
+            veredicto, motivos, cantidad = ordenes.validar(o, _resumen(c, d), d["valoracion"].get(t), precio)
+            if veredicto != "APROBADA":
+                cambios.append(dict(ficha, que="no comprada", por_que=_frase("; ".join(motivos))))
+                return False
+            hecho = ordenes.ejecutar_compra(c, o, cantidad, precio, api)
+        except (ErrorFuente, ValueError) as e:
+            cambios.append(dict(ficha, que="no comprada", por_que=_frase("la orden no se ha completado: %s" % e)))
+            return False
+        hechos.append(hecho)
+        explicacion = {"por_que": _frase(por_que_seguimos) or "Al precio de la apertura se siguen cumpliendo todas las condiciones del plan."} if previsto \
+            else {k: o.get(k) for k in ("por_que", "que_esperamos", "cuando_saldriamos")}
+        cambios.append(dict(ficha, que="comprada", precio=hecho["precio"], cantidad=hecho["cantidad"],
+                            importe_usd=hecho["importe_usd"], **explicacion))
+        return True
+
+    compras = 0
     if abierto:
-        for o in [x for x in aprobadas if x.get("accion") == "vender"] + [x for x in aprobadas if x.get("accion") != "vender"]:
+        for o in [x for x in aprobadas if x.get("accion") == "vender"]:        # primero las ventas: liberan caja
             t = o["ticker"].upper()
             precio = (sesion.get(t) or {}).get("ultimo") or precios.get(t)
+            if t not in c["posiciones"] or not precio:
+                continue
             try:
-                if o.get("accion") == "vender":
-                    if t in c["posiciones"] and precio:
-                        hechos.append(ordenes.ejecutar_venta(c, t, precio, o.get("motivo") or "decisión del plan", api))
-                    continue
-                que, por_que = decision.get(t, ("ejecutar", ""))
-                if que != "ejecutar":
-                    descartadas.append([t, por_que or "descartada en la revisión de apertura"])
-                    continue
-                if not precio:
-                    descartadas.append([t, "sin precio de la sesión"])
-                    continue
-                veredicto, motivos, cantidad = ordenes.validar(o, _resumen(c, d), d["valoracion"].get(t), precio)
-                if veredicto != "APROBADA":
-                    descartadas.append([t, "; ".join(motivos)])
-                    continue
-                hechos.append(ordenes.ejecutar_compra(c, o, cantidad, precio, api))
+                hechos.append(ordenes.ejecutar_venta(c, t, precio, o.get("motivo") or "decisión del plan", api))
+                cambios.append({"ticker": t, "que": "vendida", "previsto": not o.get("nueva"),
+                                "por_que": _frase(o.get("por_que") or o.get("motivo"))})
             except (ErrorFuente, ValueError) as e:
-                descartadas.append([t, str(e)])
+                cambios.append({"ticker": t, "que": "no vendida", "previsto": not o.get("nueva"),
+                                "por_que": _frase("la venta no se ha completado: %s" % e)})
+        for o in [x for x in aprobadas if x.get("accion") != "vender"]:
+            t = o["ticker"].upper()
+            que, por_que = decision.get(t, ("ejecutar", ""))
+            if que != "ejecutar":
+                cambios.append({"ticker": t, "que": "no comprada", "previsto": True, "entrada_prevista": o.get("entrada"),
+                                "stop": o.get("stop"), "objetivo": o.get("objetivo"),
+                                "precio": (sesion.get(t) or {}).get("ultimo") or precios.get(t),
+                                "por_que": _frase(por_que) or "Se descartó al revisar la apertura."})
+                continue
+            compras += comprar(o, True, por_que if revisado else "")
+        permitidos = {v["ticker"] for v in vigilados}
+        for o in nuevas:                                                        # como mucho una, fuera del plan
+            t = o["ticker"] = o["ticker"].upper()
+            base = {"ticker": t, "que": "no comprada", "previsto": False, "entrada_prevista": o.get("entrada"),
+                    "stop": o.get("stop"), "objetivo": o.get("objetivo")}
+            if t not in permitidos:
+                cambios.append(dict(base, por_que="Fuera del plan, en la apertura solo se puede comprar un valor que el "
+                                                  "informe de la mañana dejó en vigilancia, y este no lo estaba."))
+            elif compras >= 2:
+                cambios.append(dict(base, por_que="Hoy ya se han hecho las dos compras que se permiten al día."))
+            else:
+                compras += comprar(o, False)
+    else:
+        for o in [x for x in aprobadas if x.get("accion") != "vender"]:
+            cambios.append({"ticker": o["ticker"].upper(), "que": "no comprada", "previsto": True, "entrada_prevista": o.get("entrada"),
+                            "stop": o.get("stop"), "objetivo": o.get("objetivo"),
+                            "por_que": "La bolsa estaba cerrada cuando se ejecutó la tarea, así que no se lanzó ninguna orden."})
+    if not sin_compras and not any(x["que"] == "comprada" for x in cambios):
+        sin_compras = "La bolsa estaba cerrada." if not abierto else \
+            ("El análisis de la apertura no estuvo disponible y, sin él, no se compra nada que no estuviera en el plan." if not revisado else "")
     cartera.guardar(c)
     res = _resumen(c, d)
+    descartadas = [[x["ticker"], x.get("por_que", "")] for x in cambios if x["que"] == "no comprada"]
     escribir_json(carpeta_del_dia("datos") / "apertura.json",
-                  {"hechos": hechos, "descartadas": descartadas, "comentario": comentario, "llamadas": costes})
-    cuerpo = [inf.bloque_cartera(res)]
-    if comentario:
-        cuerpo.append("<h2>Cómo ha abierto</h2><p>%s</p>" % inf.e(comentario))
-    cuerpo.append("<h2>Mercado a las %s</h2>%s" % (d["hora_madrid"], inf.bloque_indices(
-        d["indices"], ["S&P 500", "Nasdaq 100", "Russell 2000", "VIX", "Euro/dólar"])))
-    cuerpo.append("<h2>Operaciones lanzadas</h2>" + inf.bloque_operaciones(
-        hechos, "No se ha lanzado ninguna operación."))
-    cuerpo.append("<h2>Órdenes del plan descartadas</h2>" + inf.tabla(
-        [("Valor", 0), ("Motivo", 0)], [[inf.e(t), inf.e(m)] for t, m in descartadas], "Ninguna."))
-    cuerpo.append("<h2>Posiciones tras la apertura</h2>" + inf.bloque_posiciones(res))
-    ruta, paginas, escala = inf.componer("Apertura", _fecha_larga(ahora_madrid()), _chips(d, costes),
-                                         "".join(cuerpo), _pie(avisos), carpeta_informes() / "1545-apertura.pdf")
-    return "apertura: %d operaciones, %d descartadas -> %s (%s pág.)" % (len(hechos), len(descartadas), ruta, paginas)
+                  {"hechos": hechos, "cambios": cambios, "descartadas": descartadas, "comentario": comentario,
+                   "sin_compras": sin_compras, "llamadas": costes})
+    ruta, paginas, escala = _pdf_apertura(d, res, comentario, cambios, habia_compras, sin_compras, hechos, costes, avisos)
+    return "apertura: %d operaciones, %d compras no hechas -> %s (%s pág.)" % (len(hechos), len(descartadas), ruta, paginas)
 
 
 # ---------------------------------------------------------------- 22:10 cierre

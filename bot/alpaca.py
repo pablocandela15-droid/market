@@ -10,7 +10,7 @@ import json
 import time
 import urllib.parse
 
-from .base import ErrorFuente, claves, pedir
+from .base import ErrorFuente, claves, pedir, SUFIJO
 
 DIRECCION = "https://paper-api.alpaca.markets"      # simulación; no modificar
 PREFIJO_SIMULACION = "PK"
@@ -94,7 +94,10 @@ class Alpaca:
 
 
 def cliente():
-    """Devuelve el cliente si hay claves de simulación; si no, None (modo en seco)."""
+    """Devuelve el cliente si hay claves de simulación; si no, None (modo en seco).
+    En modo de prueba (BOT_PRUEBA=1) también None: los ensayos nunca envían órdenes a Alpaca."""
+    if SUFIJO:
+        return None
     k = claves()
     if k.get("ALPACA_API_KEY") and k.get("ALPACA_SECRET_KEY"):
         return Alpaca(k["ALPACA_API_KEY"], k["ALPACA_SECRET_KEY"])
