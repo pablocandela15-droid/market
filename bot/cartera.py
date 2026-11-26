@@ -11,10 +11,17 @@ from __future__ import annotations
 
 import datetime as dt
 
+from . import impuestos
 from .base import ESTADO, anexar_linea, ahora_madrid, escribir_json, leer_json, leer_lineas, reglas
 
 ARCHIVO = ESTADO / "cartera.json"
 OPERACIONES = ESTADO / "operaciones.jsonl"
+_CAMBIO = {"eurusd": None}       # último cambio euro/dólar visto: se guarda con cada operación, para los impuestos
+
+
+def fijar_cambio(eurusd):
+    if eurusd:
+        _CAMBIO["eurusd"] = round(eurusd, 4)
 
 
 def cargar():
@@ -65,6 +72,8 @@ def _anotar(ticker, accion, cantidad, precio, motivo, via, extra=None):
     fila = {"fecha": ahora.date().isoformat(), "hora": ahora.strftime("%H:%M"), "ticker": ticker,
             "accion": accion, "cantidad": round(cantidad, 6), "precio": round(precio, 4),
             "importe_usd": round(cantidad * precio, 2), "motivo": motivo, "via": via}
+    if _CAMBIO["eurusd"]:
+        fila["eurusd"] = _CAMBIO["eurusd"]
     fila.update(extra or {})
     anexar_linea(OPERACIONES, fila)
     return fila
@@ -84,19 +93,32 @@ def comprar(c, ticker, cantidad, precio, stop, objetivo, motivo, via, orden_id=N
     return _anotar(ticker, "compra", cantidad, precio, motivo, via)
 
 
-def vender(c, ticker, precio, motivo, via=None):
+def vender(c, ticker, precio, motivo, via=None, extra=None):
+    """Anota una venta al precio dado. `extra` añade campos a la fila del diario de operaciones
+    (por ejemplo, el precio previsto y lo que se ha perdido respecto a él)."""
     p = c["posiciones"].pop(ticker)
     importe = round(p["cantidad"] * precio, 2)
     c["caja_usd"] = round(c["caja_usd"] + importe, 2)
     res = round(p["cantidad"] * (precio - p["precio_entrada"]), 2)
-    return _anotar(ticker, "venta", p["cantidad"], precio, motivo, via or p["via"], {
-        "resultado_usd": res, "resultado_pct": round((precio / p["precio_entrada"] - 1) * 100, 2),
-        "multiplo_riesgo": round(res / p["riesgo_usd"], 2) if p.get("riesgo_usd") else None,
-        "dias": (ahora_madrid().date() - dt.date.fromisoformat(p["fecha_entrada"])).days})
+    fila = {"resultado_usd": res, "resultado_pct": round((precio / p["precio_entrada"] - 1) * 100, 2),
+            "multiplo_riesgo": round(res / p["riesgo_usd"], 2) if p.get("riesgo_usd") else None,
+            "dias": (ahora_madrid().date() - dt.date.fromisoformat(p["fecha_entrada"])).days}
+    fila.update(extra or {})
+    return _anotar(ticker, "venta", p["cantidad"], precio, motivo, via or p["via"], fila)
 
 
 def revisar_stops(c, velas):
-    """Stops y objetivos que vigila el propio bot (posiciones sin stop en el bróker).
+    """Detecta las salidas y las anota al precio teórico (el del stop, el objetivo o la apertura).
+
+    Es lo que vale sin bróker (modo en seco). Con Alpaca no se usa: allí la venta se anota al precio
+    al que el bróker la ejecuta de verdad (`ordenes.ejecutar_venta`), que puede ser peor que el teórico.
+    """
+    return [vender(c, s["ticker"], s["precio"], s["motivo"]) for s in detectar_salidas(c, velas)]
+
+
+def detectar_salidas(c, velas):
+    """Stops y objetivos que vigila el propio bot (posiciones sin stop en el bróker). No vende:
+    devuelve [{ticker, precio, motivo}] con el precio teórico de cada salida.
 
     `velas` es {ticker: serie diaria}. Día de la entrada: solo se mira el cierre,
     porque el mínimo del día incluye horas anteriores a la compra. Días
@@ -104,11 +126,11 @@ def revisar_stops(c, velas):
     lo toca durante el día, al precio del stop. Si el mismo día toca stop y
     objetivo, se da por bueno el stop.
     """
-    ventas = []
+    salidas = []
     for ticker in list(c["posiciones"]):
         p = c["posiciones"][ticker]
         s = velas.get(ticker)
-        if p.get("stop_en_broker") or not s:
+        if p.get("stop_en_broker") or p.get("venta_pendiente") or not s:
             continue
         entrada = p["fecha_entrada"]
         for i, ts in enumerate(s["t"]):
@@ -131,11 +153,11 @@ def revisar_stops(c, velas):
             elif h >= p["objetivo"]:
                 precio, motivo = p["objetivo"], "objetivo"
             if precio is not None:
-                ventas.append(vender(c, ticker, precio, motivo))
+                salidas.append({"ticker": ticker, "precio": precio, "motivo": motivo})
                 break
             if i < len(s["t"]) - 1:          # la última vela puede ser la sesión en curso
                 p["revisado_hasta"] = dia
-    return ventas
+    return salidas
 
 
 # ---------------------------------------------------------------- valoración
@@ -143,6 +165,7 @@ def revisar_stops(c, velas):
 def resumen(c, precios, eurusd, ref_precio):
     """Foto de la cartera con los precios dados ({ticker: precio})."""
     r = reglas()
+    fijar_cambio(eurusd)
     filas, valor_pos = [], 0.0
     for t, p in sorted(c["posiciones"].items()):
         precio = precios.get(t) or p["precio_entrada"]
@@ -181,6 +204,7 @@ def resumen(c, precios, eurusd, ref_precio):
     def pct(a, b):
         return round((a / b - 1) * 100, 2) if b else None
     return {
+        "impuestos": impuestos.estado(c, filas, eurusd, r=r),
         "valor_usd": round(valor, 2), "valor_eur": round(valor / eurusd, 2), "caja_usd": c["caja_usd"],
         "invertido_pct": round(valor_pos / valor * 100, 1) if valor else 0.0,
         "aportado_eur": aportado_eur, "aportado_usd": round(aportado_usd, 2),

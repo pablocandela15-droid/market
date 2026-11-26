@@ -1,0 +1,14 @@
+[
+  {
+    "desde": "2026-11-23",
+    "reglas": "Las del principio: riesgo del 1 % de la cartera por operación, posición de hasta el 25 %, 2 compras al día como mucho, objetivo de al menos 1,5 veces lo arriesgado (también al recalcular en la apertura), hueco de apertura del 3 %, PEG máximo 2. Los guiones decían que no había obligación de operar."
+  },
+  {
+    "desde": "2026-11-25",
+    "reglas": "Primera versión del perfil agresivo, en vigor solo el 25 de noviembre: riesgo del 1,5 %, posición de hasta el 30 %, hasta 3 compras al día, 1,5 veces lo arriesgado en el plan y solo 1,2 al recalcular en la apertura, hueco del 4 %, PEG máximo 2,5. Los guiones empujaban a comprar cada día y a no tener caja; en la apertura solo se descartaba una compra por un hecho concreto. Fue una mala lectura de lo que pidió el dueño."
+  },
+  {
+    "desde": "2026-11-26",
+    "reglas": "Perfil agresivo corregido: riesgo del 1,5 %, posición de hasta el 30 %, 2 compras al día, 2 veces lo arriesgado en el plan y 1,5 en la apertura, hueco del 4 %, PEG máximo 2,5. Los guiones dicen que la caja es una posición válida, que se compra poco y con recorrido, y que con el mercado cayendo con fuerza se espera."
+  }
+]

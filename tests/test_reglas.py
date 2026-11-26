@@ -23,10 +23,11 @@ REGLAS = {
     "valoracion": {"peg_maximo": 2.0, "permitir_sin_beneficios": True, "dias_sin_comprar_antes_de_resultados": 2},
 }
 BARATA = {"per": 15.0, "per_futuro": 12.0, "peg": 0.9, "resultados": None}
-# Perfil agresivo (25 nov de 2026): las cifras de config/reglas.json que cambian respecto a las de arriba.
+# Perfil agresivo (26 nov de 2026): más riesgo por compra y más ganancia exigida. Las cifras de config/reglas.json
+# que cambian respecto a las de arriba.
 AGRESIVAS = {
-    "riesgo": dict(REGLAS["riesgo"], riesgo_por_operacion_pct=1.5, max_posicion_pct=30, max_compras_dia=3,
-                   min_recompensa_riesgo_apertura=1.2, max_hueco_apertura_pct=4),
+    "riesgo": dict(REGLAS["riesgo"], riesgo_por_operacion_pct=1.5, max_posicion_pct=30, max_compras_dia=2,
+                   min_recompensa_riesgo=2.0, min_recompensa_riesgo_apertura=1.5, max_hueco_apertura_pct=4),
     "valoracion": dict(REGLAS["valoracion"], peg_maximo=2.5),
 }
 
@@ -288,7 +289,7 @@ class PorQueEnLaApertura(unittest.TestCase):
 
 
 class PerfilAgresivo(unittest.TestCase):
-    """Más riesgo por operación y menos compras del plan perdidas en la apertura."""
+    """Más riesgo por compra para ganar más: cada apuesta arriesga más y tiene que poder ganar el doble."""
 
     def v(self, precio=None, previsto=True, val=BARATA, **o):
         return ordenes.validar(orden(**o), res(), val, precio, AGRESIVAS, previsto=previsto)
@@ -300,29 +301,34 @@ class PerfilAgresivo(unittest.TestCase):
         self.assertEqual(cantidad, 3)
         self.assertIn("30", nota)
 
-    def test_abrir_algo_mas_cara_ya_no_tira_la_compra_prevista(self):
-        # El caso de PG&E del 24 nov: plan a 14,08 $, abre a 14,20 $ y gana 1,3 veces lo arriesgado.
-        pge = dict(entrada=14.08, stop=13.30, objetivo=15.40)
-        self.assertEqual(self.v(14.20, **pge)[0], "APROBADA")
-        self.assertEqual(ordenes.validar(orden(**pge), res(), BARATA, 14.20, REGLAS)[0], "BLOQUEADA")   # con las reglas de antes
-        veredicto, motivos, _ = self.v(14.40, **pge)                           # tan cara que ya no gana ni 1,2 veces
+    def test_la_manana_pide_ganar_el_doble_de_lo_arriesgado(self):
+        veredicto, motivos, _ = self.v(objetivo=108.0)                         # 1,6 veces: antes valía
         self.assertEqual(veredicto, "BLOQUEADA")
-        self.assertIn("se exige al menos 1,2", motivos[0])
+        self.assertIn("el mínimo es 2,0", motivos[0])
+        self.assertEqual(ordenes.validar(orden(objetivo=108.0), res(), BARATA, None, REGLAS)[0], "APROBADA")
+        self.assertEqual(self.v(objetivo=112.0)[0], "APROBADA")                # 2,4 veces
+        self.assertFalse(any("margen justo" in x for x in self.v(objetivo=112.0)[1]))
+        # stop al 3 %: gana justo el doble, pero un 1 % más cara ya solo ganaría 1,25 veces
+        veredicto, avisos, _ = self.v(stop=97.0, objetivo=106.0)
+        self.assertEqual(veredicto, "APROBADA")
+        self.assertTrue(any("margen justo" in x for x in avisos))
+
+    def test_abrir_algo_mas_cara_no_tira_la_compra_prevista(self):
+        plan = dict(objetivo=111.0)                                            # 2,2 veces a 100 $
+        self.assertEqual(self.v(100.8, **plan)[0], "APROBADA")                 # a 100,80 $ gana 1,8 veces: basta con 1,5
+        veredicto, motivos, _ = self.v(102.0, **plan)                          # a 102 $ ya solo 1,3 veces
+        self.assertEqual(veredicto, "BLOQUEADA")
+        self.assertIn("se exige al menos 1,5", motivos[0])
 
     def test_a_la_compra_no_prevista_se_le_exige_la_proporcion_completa(self):
-        self.assertEqual(self.v(100.0, previsto=True, objetivo=106.5)[0], "APROBADA")     # 1,3 veces: vale si venía en el plan
-        self.assertEqual(self.v(100.0, previsto=False, objetivo=106.5)[0], "BLOQUEADA")
-        self.assertEqual(self.v(100.0, previsto=False, objetivo=108.0)[0], "APROBADA")    # 1,6 veces
-
-    def test_la_manana_sigue_pidiendo_uno_y_medio(self):
-        self.assertEqual(self.v(objetivo=106.5)[0], "BLOQUEADA")
-        self.assertTrue(any("margen justo" in x for x in self.v(objetivo=108.0)[1]))      # un 1 % más cara: 1,17 veces
-        self.assertFalse(any("margen justo" in x for x in self.v(objetivo=109.0)[1]))     # un 1 % más cara: 1,33 veces
+        self.assertEqual(self.v(100.0, previsto=True, objetivo=108.0)[0], "APROBADA")     # 1,6 veces: vale si venía en el plan
+        self.assertEqual(self.v(100.0, previsto=False, objetivo=108.0)[0], "BLOQUEADA")
+        self.assertEqual(self.v(100.0, previsto=False, objetivo=111.0)[0], "APROBADA")    # 2,2 veces
 
     def test_admite_valoraciones_y_huecos_algo_mayores(self):
         cara = dict(BARATA, peg=2.3)
-        self.assertEqual(self.v(val=cara)[0], "APROBADA")
-        self.assertEqual(ordenes.validar(orden(), res(), cara, None, REGLAS)[0], "BLOQUEADA")
+        self.assertEqual(self.v(val=cara, objetivo=112.0)[0], "APROBADA")
+        self.assertEqual(ordenes.validar(orden(objetivo=112.0), res(), cara, None, REGLAS)[0], "BLOQUEADA")
         lejos = dict(objetivo=125.0)                                           # abre un 3,5 % por encima de lo previsto
         self.assertEqual(self.v(103.5, **lejos)[0], "APROBADA")
         self.assertEqual(ordenes.validar(orden(**lejos), res(), BARATA, 103.5, REGLAS)[0], "BLOQUEADA")
@@ -335,3 +341,103 @@ class PerfilAgresivo(unittest.TestCase):
         self.assertEqual(r["riesgo"]["max_posiciones"], 5)                     # lo que no cambia
         self.assertEqual(r["valoracion"]["dias_sin_comprar_antes_de_resultados"], 2)
         self.assertFalse(r["operativa"]["margen"] or r["operativa"]["cortos"] or r["operativa"]["opciones"])
+
+    def test_los_guiones_no_empujan_a_invertir_todo(self):
+        guiones = Path(tarea.__file__).resolve().parent.parent / "tareas" / "guiones"
+        estratega = (guiones / "estratega.md").read_text(encoding="utf-8")
+        apertura = (guiones / "apertura.md").read_text(encoding="utf-8")
+        self.assertIn("No hay ninguna obligación de operar ni de estar invertido", estratega)
+        self.assertIn("para ganar más dinero", estratega)
+        self.assertNotIn("está para estar invertida", estratega)
+        self.assertNotIn("convicción media basta", estratega)
+        self.assertIn("No hay ninguna obligación de comprar", apertura)
+
+
+class BrokerFalso:
+    """Alpaca de mentira: vende al precio que se le diga, o deja la venta sin ejecutar."""
+
+    def __init__(self, precio=None, estado="filled", posiciones=()):
+        self.precio, self.estado, self._pos, self.cerradas = precio, estado, list(posiciones), []
+
+    def cerrar(self, simbolo):
+        self.cerradas.append(simbolo)
+        return {"id": "venta-1"}
+
+    def esperar_ejecucion(self, orden_id):
+        return self.orden(orden_id)
+
+    def orden(self, orden_id):
+        return {"id": orden_id, "status": self.estado, "filled_avg_price": self.precio and str(self.precio)}
+
+    def posiciones(self):
+        return self._pos
+
+
+class VentasAlPrecioReal(unittest.TestCase):
+    """Con Alpaca, una venta se anota al precio al que el bróker la ejecuta, no al del stop. El 25 nov de 2026
+    el bot anotó la venta de AMZN a 242,00 $ (su stop) y Alpaca la había ejecutado a 237,968 $."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        cartera.OPERACIONES = Path(self.tmp.name) / "operaciones.jsonl"
+        hace_dias = (dt.date.today() - dt.timedelta(days=2)).isoformat()
+        self.c = {"caja_usd": 0.0, "pendientes": {}, "posiciones": {"AMZN": {
+            "cantidad": 0.6985, "precio_entrada": 257.63, "fecha_entrada": hace_dias, "stop": 242.0, "objetivo": 284.0,
+            "riesgo_usd": 10.92, "motivo": "", "via": "alpaca", "orden_id": "compra-1", "stop_en_broker": False,
+            "revisado_hasta": None}}}
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_se_anota_el_precio_de_alpaca_y_no_el_del_stop(self):
+        v = ordenes.ejecutar_venta(self.c, "AMZN", 242.0, "stop", BrokerFalso(237.968))
+        self.assertEqual((v["precio"], v["precio_previsto"]), (237.968, 242.0))
+        self.assertEqual((v["resultado_usd"], v["deslizamiento_usd"], v["multiplo_riesgo"]), (-13.73, -2.82, -1.26))
+        self.assertEqual(self.c["caja_usd"], 166.22)
+        self.assertNotIn("AMZN", self.c["posiciones"])
+
+    def test_con_la_bolsa_cerrada_queda_pendiente_y_se_anota_al_ejecutarse(self):
+        cerrado = BrokerFalso(estado="accepted")
+        with self.assertRaises(ordenes.ErrorFuente):
+            ordenes.ejecutar_venta(self.c, "AMZN", 242.0, "stop", cerrado)
+        self.assertIn("venta_pendiente", self.c["posiciones"]["AMZN"])       # sigue en cartera y sin anotar
+        self.assertEqual(self.c["caja_usd"], 0.0)
+        self.assertEqual(cartera.detectar_salidas(self.c, {"AMZN": {"t": [], "o": [], "h": [], "l": [], "c": []}}), [])
+        self.assertEqual(ordenes.sincronizar(self.c, cerrado), [])           # aún sin ejecutar: nada cambia
+        hechos = ordenes.sincronizar(self.c, BrokerFalso(239.5))             # al día siguiente Alpaca la ejecuta
+        self.assertEqual((hechos[0]["precio"], hechos[0]["motivo"]), (239.5, "stop"))
+        self.assertNotIn("AMZN", self.c["posiciones"])
+
+    def test_si_alpaca_cancela_la_venta_se_vuelve_a_vigilar(self):
+        with self.assertRaises(ordenes.ErrorFuente):
+            ordenes.ejecutar_venta(self.c, "AMZN", 242.0, "stop", BrokerFalso(estado="accepted"))
+        ordenes.sincronizar(self.c, BrokerFalso(estado="canceled"))
+        self.assertNotIn("venta_pendiente", self.c["posiciones"]["AMZN"])
+
+    def test_sin_conexion_no_se_anota_una_venta_que_no_ha_ocurrido(self):
+        with self.assertRaises(ordenes.ErrorFuente):
+            ordenes.ejecutar_venta(self.c, "AMZN", 242.0, "stop", None)
+        self.assertIn("AMZN", self.c["posiciones"])
+
+    def test_en_seco_se_anota_al_precio_previsto(self):
+        self.c["posiciones"]["AMZN"]["via"] = "en seco"
+        self.assertEqual(ordenes.ejecutar_venta(self.c, "AMZN", 242.0, "stop", None)["precio"], 242.0)
+
+    def test_la_vigilancia_vende_en_alpaca_y_anota_el_precio_real(self):
+        base = dt.datetime.fromisoformat(self.c["posiciones"]["AMZN"]["fecha_entrada"]).replace(tzinfo=dt.timezone.utc)
+        t = [int((base + dt.timedelta(days=d, hours=14)).timestamp()) for d in (0, 1)]
+        velas = {"AMZN": {"t": t, "o": [258, 250], "h": [260, 251], "l": [255, 236], "c": [257, 238]}}
+        api, avisos = BrokerFalso(237.968), []
+        hechos = tarea._vigilar(self.c, velas, api, avisos)
+        self.assertEqual((api.cerradas, hechos[0]["precio"], hechos[0]["precio_previsto"]), (["AMZN"], 237.968, 242.0))
+        self.assertEqual(avisos, [])
+
+    def test_avisa_si_la_cartera_no_cuadra_con_alpaca(self):
+        igual = BrokerFalso(posiciones=[{"symbol": "AMZN", "qty": "0.6985"}])
+        self.assertEqual(ordenes.descuadres(self.c, igual), [])
+        distinto = BrokerFalso(posiciones=[{"symbol": "AMZN", "qty": "0.5"}, {"symbol": "TSLA", "qty": "1"}])
+        avisos = ordenes.descuadres(self.c, distinto)
+        self.assertEqual(len(avisos), 2)
+        self.assertIn("Alpaca tiene 0,5000", avisos[0])
+        self.assertIn("TSLA", avisos[1])
+        self.assertIn("no está en Alpaca", ordenes.descuadres(self.c, BrokerFalso())[0])

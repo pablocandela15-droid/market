@@ -28,31 +28,48 @@ cita cada paso están en [estado-del-arte.md](estado-del-arte.md).
 ## Perfil agresivo
 
 El 25 nov de 2026 el dueño pidió que el bot fuera "más agresivo" y tomara "algo
-más de riesgos". Cambió esto:
+más de riesgos". La primera lectura fue equivocada: se empujó al bot a comprar
+más y a estar invertido, y ese día compró tres valores defensivos en una
+apertura con el S&P 500 cayendo un 3,2 % y dejó la caja en 53 $. El 26 nov lo
+aclaró: "nadie te dice que tengas que invertir todo el capital"; más arriesgado
+es tomar más riesgos para ganar más dinero.
 
-| Qué | Antes | Ahora | Dónde |
+Así que agresivo significa **apuestas con más recorrido, no más compras**:
+
+| Qué | Al principio | Ahora | Dónde |
 |---|---|---|---|
 | Riesgo por operación | 1 % | 1,5 % | `riesgo.riesgo_por_operacion_pct` |
 | Tamaño máximo de una posición | 25 % | 30 % | `riesgo.max_posicion_pct` |
-| Compras al día | 2 | 3 | `riesgo.max_compras_dia` |
-| Ganancia mínima frente al riesgo, al recalcular en la apertura | 1,5 veces | 1,2 veces | `riesgo.min_recompensa_riesgo_apertura` |
+| Ganancia mínima frente al riesgo, en el plan de la mañana | 1,5 veces | 2 veces | `riesgo.min_recompensa_riesgo` |
+| La misma, al recalcular una compra del plan en la apertura | 1,5 veces | 1,5 veces | `riesgo.min_recompensa_riesgo_apertura` |
 | Cuánto más caro puede abrir un valor del plan | 3 % | 4 % | `riesgo.max_hueco_apertura_pct` |
 | PEG máximo | 2 | 2,5 | `valoracion.peg_maximo` |
+| Compras al día | 2 | 2 | `riesgo.max_compras_dia` |
 
-Y la actitud de los guiones (`estratega.md`, `apertura.md`): la cartera está
-para estar invertida y cada mañana se buscan compras; una postura defensiva de
-la simulación ya no significa dejar de comprar, sino comprar en los sectores
-que favorece; se admiten valores que se mueven más y compras de continuación;
-en la apertura una orden del plan solo se descarta por un hecho concreto.
+Y los guiones (`estratega.md`, `apertura.md`):
+
+- No hay obligación de operar ni de estar invertido: la caja es una posición más.
+- Pocas compras y con recorrido: objetivo al menos a 2 veces lo arriesgado y,
+  como orientación, a un 10 % o más de la entrada. Solo con convicción alta;
+  las de convicción media van a vigilancia.
+- El recorrido se busca en valores que se mueven más que el índice y tienen
+  algo que los empuje (crecimiento, temas, resultados, rupturas, giros con señal).
+- Con el mercado cayendo con fuerza se espera en caja. En la apertura, si el
+  S&P 500 pierde más de un 2 % o el VIX se dispara, las compras del plan se dejan.
+- No se llena la cartera de valores defensivos para estar invertido.
+- Se puede rotar: vender la posición con menos recorrido para hacer sitio a una
+  apuesta claramente mejor (la venta se ejecuta antes que la compra).
 
 No cambia: stop en toda compra, solo compras (sin margen, cortos ni opciones),
-5 posiciones como máximo, nada a 2 días o menos de resultados, nada en un
-sector con sesgo negativo en la simulación, y la proporción de 1,5 veces en el
-plan de la mañana. Las posiciones abiertas antes del cambio conservan su tamaño.
+5 posiciones como máximo, nada a 2 días o menos de resultados y nada en un
+sector con sesgo negativo en la simulación. Las posiciones ya abiertas
+conservan su tamaño, su stop y su objetivo.
 
-Consecuencia: con 5 posiciones y todos los stops saltando a la vez la pérdida
-prevista pasa del 5 % al 7,5 % de la cartera, y un hueco a la baja puede
-superarla. Para volver atrás basta poner las cifras de la columna "Antes".
+Consecuencia: cada compra que sale mal cuesta un 1,5 % de la cartera en vez de
+un 1 %, y cada una que llega a su objetivo gana al menos un 3 % en vez de un
+1,5 %. Con 5 posiciones y todos los stops saltando a la vez la pérdida prevista
+es del 7,5 %, y un hueco a la baja puede superarla. Al exigir el doble habrá
+menos compras y más días en caja.
 
 ## Reglas comunes
 
@@ -60,9 +77,9 @@ superarla. Para volver atrás basta poner las cifras de la columna "Antes".
 |---|---|
 | Capital simulado | 1.000 € iniciales y 200 € el día 1 de cada mes, convertidos a dólares al cambio del día |
 | Estilo | Operaciones de varios días o semanas; nada dentro del día |
-| Perfil | Agresivo desde el 25 nov de 2026, a petición del dueño (ver "Perfil agresivo") |
-| Riesgo | 1,5 % por operación, stop obligatorio, máximo 5 posiciones, ninguna por encima del 30 %, hasta 3 compras al día |
-| Calidad de la operación | Objetivo de al menos 1,5 veces el riesgo por la mañana y 1,2 veces al recalcular en la apertura; stop entre el 2 % y el 15 % |
+| Perfil | Agresivo: más riesgo por compra para ganar más, sin obligación de estar invertido (ver "Perfil agresivo") |
+| Riesgo | 1,5 % por operación, stop obligatorio, máximo 5 posiciones, ninguna por encima del 30 %, hasta 2 compras al día |
+| Calidad de la operación | Objetivo de al menos 2 veces el riesgo por la mañana y 1,5 veces al recalcular en la apertura; stop entre el 2 % y el 15 % |
 | Tipo de orden | Solo compras, con acciones fraccionadas; sin cortos, margen ni opciones |
 | Valoración | Sin compra con PEG por encima de 2,5, sin datos, o a 2 días o menos de resultados |
 | Ejecución | El bot decide solo, únicamente contra la dirección de simulación de Alpaca |
@@ -178,7 +195,7 @@ Desde el 24 nov de 2026 la apertura **analiza el mercado siempre**, haya o no
   que la mañana dejó en vigilancia y solo si ha pasado hoy algo concreto. Pasa
   por las mismas reglas que cualquier compra y sale con "por qué", "esperamos
   que" y "saldríamos si". A esta compra se le exige la proporción completa
-  entre ganancia y riesgo (1,5 veces). El tope es de tres compras al día
+  entre ganancia y riesgo (2 veces). El tope es de dos compras al día
   (`max_compras_dia`), contando las del plan.
 - Si no se compra nada, dice por qué.
 - Un stop solo se sube si queda al menos a `stop_min_pct` del precio.
@@ -238,6 +255,86 @@ solo se comprueba tres veces al día.
 | 3 | Script | Compone el PDF | `Informes/<Mes>/<día>/2210-cierre.pdf` |
 
 Las lecciones y los avisos vuelven al estratega en el informe de la mañana siguiente.
+El informe lleva la sección "Ganancias e impuestos" (ver "Impuestos").
+
+---
+
+## Informe semanal · sábados, detrás del informe de la mañana
+
+**Modelo:** Fable 5.2 (`modelos.semanal`), sin búsqueda web: todo sale de lo guardado en la semana.
+**Código:** `bot/semanal.py`, guion `tareas/guiones/semanal.md`. **Coste medido:** 0,94 $.
+
+No tiene programación propia: la tarea de la mañana lo lanza los sábados al acabar. A mano:
+`python3 -m bot.tarea semanal` (la última semana terminada), `--forzar` (la semana en curso) y
+`--sin-modelo` (solo cifras, gráficas e impuestos; no toca las lecciones).
+
+### Casos de uso
+
+- Saber qué ha pasado en la semana: resultado frente al mismo dinero en el S&P 500 y de dónde viene.
+- Verlo en gráficas: evolución de la cartera y del índice, lo que gana o pierde cada valor y dónde está el dinero.
+- Saber cuánto se lleva ganado con las ventas y cuánto impuesto tocaría (ver "Impuestos").
+- Que la cartera aprenda de sus errores (ver "Cómo aprende el bot").
+
+### Flujo
+
+| Paso | Quién | Qué hace | Dónde |
+|---|---|---|---|
+| 0 | Script | Reúne el plan, la apertura y el cierre de cada día, las operaciones, los cierres diarios y la cartera valorada con los precios del último cierre | `datos/<día>/`, `estado/` |
+| 0 | Script | Hace las cuentas de la semana (sin tomar las aportaciones por ganancia) y las de impuestos | `bot/semanal.py`, `bot/impuestos.py` |
+| 1 | Modelo | Repasa cada decisión, separa el error de la mala suerte, clasifica cada error (análisis, reglas, ejecución o mala suerte) y deja la lista de lecciones vigentes | `semanal.md` |
+| 2 | Script | Guarda las lecciones | `estado/lecciones_vigentes.json` |
+| 3 | Script | Dibuja las gráficas y compone el PDF (hasta tres páginas, sin recortar textos) | `Informes/<Mes>/<día>/0710-semanal.pdf` |
+
+### Cómo aprende el bot
+
+1. Cada cierre apunta hasta tres lecciones en caliente (`estado/lecciones.jsonl`).
+2. Una vez por semana la revisión contrasta esas lecciones con lo que pasó después, las funde con las que salen de los
+   errores de la semana y deja como mucho ocho **lecciones vigentes**, cada una con el hecho del que sale.
+3. El estratega (mañana), la revisión de la apertura y el cierre reciben `lecciones_vigentes` cada día. El estratega debe
+   aplicarlas y decir en `riesgos` si decide en contra de alguna; la apertura descarta una compra que repita un error apuntado.
+4. La semana siguiente se comprueba si se cumplieron: cada lección se mantiene, se corrige o se retira con su motivo.
+
+La revisión recibe además `config/notas_del_dueno.json` (lo que el dueño ha pedido o corregido; manda sobre cualquier
+lección) y `config/historial_de_reglas.json` (qué reglas había cada día, para no juzgar una compra con reglas posteriores).
+**Hay que añadir una entrada a esos dos archivos cada vez que el dueño corrija al bot o cambien las reglas.**
+
+Límite: una lección es texto que leen los modelos, no un freno del código. Cuando la revisión clasifica un error como
+`reglas`, lo dice en el informe para que lo arregle quien mantiene el bot. Primer caso (26 nov): pide un freno en el código
+para no comprar el día que el índice abre con caída fuerte; hoy es solo lección y texto del guion.
+
+### Gráficas
+
+`bot/graficas.py` las escribe en SVG, sin bibliotecas: una línea para la evolución (un solo eje, leyenda con el último
+valor), barras desde el cero para lo que gana o pierde cada valor (el importe va escrito con su signo: no se dice solo con
+el color) y una barra partida para el reparto del dinero (la caja, en gris). Los colores de las series son de una paleta
+comprobada para daltónicos; los mismos datos van siempre también en una tabla del informe.
+
+---
+
+## Impuestos
+
+`bot/impuestos.py` estima lo que se llevaría Hacienda con las reglas generales del IRPF (base del ahorro; tramos en
+`config/reglas.json`, `impuestos.tramos_ahorro`). En la simulación no se paga nada: sirve para ver el resultado real.
+
+- Cada venta se pasa a euros con el cambio oficial del Banco Central Europeo del día de la compra y del de la venta
+  (se descarga y se guarda en `estado/cambio_bce.json`; si nunca se pudo descargar, el que anotó el bot).
+- Las pérdidas restan de las ganancias del año y, lo que sobre, de las de los cuatro siguientes.
+- Regla de los dos meses: una pérdida se aplaza si se recompra el mismo valor en los dos meses de antes o de después.
+- No entran dividendos (la simulación no los cobra) ni comisiones (Alpaca no cobra).
+
+Dónde sale: una frase en la mañana y en la apertura; la sección "Ganancias e impuestos" en el cierre y en el semanal
+(ganado o perdido con ventas, impuesto estimado, lo que queda después y lo que sigue sin vender); y el estratega lo recibe
+en `cartera.impuestos`, con lo que costaría vender hoy cada posición, para tenerlo en cuenta al rotar.
+
+### Informe para la declaración de la renta
+
+`python3 -m bot.tarea renta --anio 2026` (sin `--anio`, el año en curso). No usa modelos. Deja en `Informes/Renta/<año>/`:
+
+- `renta-<año>.pdf`: la cuenta paso a paso (ganancias, pérdidas, tramos, impuesto, cuándo se paga), cada venta con su
+  valor de compra y de venta en euros, todas las operaciones del año, lo que sigue en cartera y las notas sobre el bróker extranjero.
+- `renta-<año>-operaciones.csv` y `renta-<año>-ventas.csv`, para Excel o para un gestor.
+
+Alpaca es un bróker de EE. UU.: no informa a Hacienda ni retiene. Mientras la cuenta sea de simulación no hay nada que declarar.
 
 ---
 

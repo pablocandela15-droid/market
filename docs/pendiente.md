@@ -1,7 +1,7 @@
 # Estado del trabajo y siguientes pasos
 
 Nota de relevo: si una sesión se corta, aquí está lo necesario para seguir.
-Última actualización: 25 de noviembre de 2026, 6:50.
+Última actualización: 26 de noviembre de 2026, 6:50.
 
 ## Hecho y funcionando
 
@@ -16,17 +16,72 @@ Nota de relevo: si una sesión se corta, aquí está lo necesario para seguir.
 - El estratega puede mantener posiciones sin plazo. Desde el 25 nov busca compras
   cada día mientras haya caja y huecos (perfil agresivo).
 
-## Hecho el 25 nov
+## Hecho el 26 nov (revisión a fondo): las cuentas usan el precio real de Alpaca
 
-- **Perfil agresivo**, pedido por el usuario ("más agresivo y tome algo más de
-  riesgos"): 1,5 % de riesgo por operación, 30 % por posición, 3 compras al
-  día, PEG hasta 2,5, hueco de apertura del 4 % y, al recalcular en la
-  apertura, basta con ganar 1,2 veces lo arriesgado (`validar` en
-  `bot/ordenes.py`, con `previsto`). Los guiones del estratega y de la apertura
-  buscan compras en vez de esperar. Tabla completa y lo que no cambia, en
-  "Perfil agresivo" de tareas-programadas.md. Las cifras las elegí yo como
-  lectura de "algo más": si pide más o menos, se tocan en `config/reglas.json`.
-  Estrena en el informe de las 7:00 y la apertura de las 15:45 del 25 nov.
+- **Fallo encontrado.** Cuando el bot descubría un stop, anotaba la venta al
+  precio del stop y después vendía en Alpaca a mercado. El 25 nov anotó AMZN a
+  242,00 $ y Alpaca la ejecutó a 237,968 $: la pérdida real fue de 13,73 $ y no
+  de 10,92 $. Las ventas decididas en la apertura tenían el mismo defecto (se
+  anotaban a la última cotización).
+- **Arreglado** (`ejecutar_venta`, `sincronizar` y `descuadres` en
+  `bot/ordenes.py`; `detectar_salidas` en `bot/cartera.py`; `_vigilar` en
+  `bot/tarea.py`): toda venta se anota al precio que devuelve Alpaca, con
+  `precio_previsto` y `deslizamiento_usd` en `operaciones.jsonl`. Con la bolsa
+  cerrada la venta queda como `venta_pendiente` en la posición y se anota al
+  ejecutarse. Sin conexión con Alpaca no se anota ninguna venta.
+- **Cuadre con Alpaca en cada tarea:** si las posiciones del bot y las de
+  Alpaca no coinciden, sale en "Avisos de datos" del informe.
+- La venta de AMZN está corregida en `estado/` (caja 50,16 $; cierre del 25
+  nov, 1.076,53 $). Copia de lo anterior en
+  `estado/copias/2026-11-26-antes-de-corregir-AMZN/`.
+- Sin probar con una ejecución real: la primera será la mañana del 27 nov.
+- **Pendiente de decidir con el usuario** (el 26 nov dijo que es para un
+  trabajo de la universidad, que quiere más de un 10 % de rentabilidad, que el
+  bot aprenda solo y que "si se ve convencido entre con todo"): stop diario en
+  Alpaca para las posiciones con fracciones (HII y ABBV no tienen stop en el
+  bróker; Alpaca admite órdenes stop de un día con fracciones), marcador de
+  todas las ideas para aprender con datos, tamaño de la compra según la
+  convicción, prueba con datos históricos, y fiabilidad del Mac (se duerme al
+  minuto si nada lo impide, no hay aviso si una tarea falla y `estado/` no
+  tiene copia de seguridad).
+
+## Hecho el 26 nov: impuestos, informe semanal con retrospectiva, gráficas e informe para la renta
+
+Pedido por el usuario el 26 nov. Hecho en otra sesión a la vez que la revisión de arriba; los cambios conviven.
+
+- **Impuestos en todos los informes** (`bot/impuestos.py`, `bloque_impuestos` y `linea_impuestos` en `bot/informe.py`):
+  cada venta en euros con el cambio oficial del BCE, cuenta del año, impuesto estimado y lo que queda después.
+  `cartera.resumen` trae `impuestos`, así que también lo ven los modelos.
+- **Informe semanal** (`bot/semanal.py`, `tareas/guiones/semanal.md`): los sábados tras la mañana. Retrospectiva, errores
+  con su causa, gráficas y lecciones vigentes (`estado/lecciones_vigentes.json`) que el estratega, la apertura y el cierre
+  reciben cada día. Primera revisión real hecha el 26 nov con la semana a medias (0,94 $).
+- **Gráficas** (`bot/graficas.py`): evolución frente al S&P 500, resultado por valor y reparto del dinero.
+- **Informe para la renta** (`bot/renta.py`): `python3 -m bot.tarea renta --anio 2026`. Si el usuario pide "el informe de
+  la renta", es esta orden: se le pasa el PDF y los dos CSV de `Informes/Renta/<año>/`.
+- Cada operación nueva guarda el cambio euro/dólar del momento (`cartera.fijar_cambio`).
+- Pruebas en `tests/test_impuestos.py` (27).
+- **Al cambiar reglas o cuando el dueño corrija al bot:** añadir una entrada a `config/historial_de_reglas.json` o a
+  `config/notas_del_dueno.json`. La revisión semanal juzga con eso.
+- Sin probar en real: la sección de impuestos del cierre (primera vez, viernes 27 nov a las 22:10) y el lanzamiento
+  automático del semanal (sábado 28 nov tras las 7:00).
+- Lo que la propia revisión ha pedido para el código y no está hecho: un freno que impida comprar el día en que el índice
+  abre con caída fuerte (hoy es lección y texto del guion).
+
+## Hecho el 25 y el 26 nov
+
+- **Perfil agresivo, corregido el 26 nov.** El usuario pidió el 25 "más agresivo
+  y tome algo más de riesgos". Lo leí como "comprar más y estar invertido" y fue
+  un error: ese día el bot compró TSN, PCG y ABBV (defensivos, convicción media)
+  con el S&P 500 abriendo un 3,2 % abajo, y dejó la caja en 53 $. El 26 lo
+  aclaró: "nadie te dice que tengas que invertir todo el capital"; quiere tomar
+  más riesgos para ganar más dinero. Ahora: 1,5 % de riesgo por operación, 30 %
+  por posición, objetivo de al menos 2 veces lo arriesgado (1,5 al recalcular
+  en la apertura), 2 compras al día, PEG hasta 2,5, y guiones sin presión por
+  invertir (caja válida, pocas compras y con recorrido, esperar si el mercado
+  cae con fuerza, rotar si hay algo claramente mejor). Detalle en "Perfil
+  agresivo" de tareas-programadas.md. Las cifras son lectura mía de lo que pidió.
+- Las tres compras del 25 nov siguen en cartera con su stop y su objetivo: no
+  se han tocado a mano. El estratega las revisa cada mañana y puede rotarlas.
 
 ## Hecho el 24 nov
 
@@ -92,9 +147,11 @@ Nota de relevo: si una sesión se corta, aquí está lo necesario para seguir.
 6. Agentes de MiroFish con Sonnet: descartado por coste con los datos medidos
    (unos 58 $ por simulación). Alternativa por explorar: recortar lo que cada
    agente relee del hilo.
-7. En git: confirmado y subido hasta `57b86cd` (25 nov, la apertura que analiza
-   y explica). El perfil agresivo está sin confirmar.
-8. Primera mañana y primera apertura automáticas con el perfil agresivo y la
-   apertura nueva: miércoles 25 nov, 7:00 y 15:45. Revisar sus informes: si el
-   estratega propone más compras, si el tamaño sale con el 1,5 % y si la
-   apertura las ejecuta.
+7. En git: confirmado y subido el 26 nov todo lo de ese día en un solo cambio
+   (perfil agresivo corregido, ventas al precio real de Alpaca, impuestos,
+   informe semanal, gráficas e informe de la renta). Venía de dos sesiones a la vez.
+8. Revisar los informes con el perfil corregido: mañana del 26 nov (festivo en
+   EE. UU., sin órdenes) y, sobre todo, mañana y apertura del viernes 27 nov
+   (media sesión): que no proponga compras de relleno, que las que proponga
+   ganen al menos el doble de lo arriesgado y qué hace con TSN, PCG y ABBV.
+9. Impuestos, semanal y renta: hechos el 26 nov (ver arriba).

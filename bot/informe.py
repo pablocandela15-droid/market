@@ -49,6 +49,10 @@ ul { margin: 2px 0 2px 14px; padding: 0; } li { margin: 0 0 1px; }
 .cifra b { display: block; font-size: 11pt; font-variant-numeric: tabular-nums; }
 .cifra b small { font-size: 7.6pt; font-weight: 500; }
 .cifra .et { font-size: 7.2pt; color: #57606a; }
+.graf { break-inside: avoid; margin: 3px 0 5px; }
+.graf .tit { font-weight: 600; font-size: 8.2pt; margin-bottom: 3px; }
+.graf .nota { color: #57606a; font-size: 7.2pt; margin-top: 2px; }
+.aviso { border: 1px solid #d8dee4; border-left: 3px solid #57606a; border-radius: 4px; padding: 4px 8px; margin: 4px 0 6px; }
 footer { margin-top: 7px; border-top: 1px solid #d8dee4; padding-top: 3px; font-size: 6.9pt; color: #6e7781; }
 """
 
@@ -114,13 +118,14 @@ def _paginas(ruta):
     return len(re.findall(rb"/Type\s*/Page(?![s])", Path(ruta).read_bytes()))
 
 
-def componer(titulo, subtitulo, chips, cuerpo, pie, ruta_pdf, paginas_max=1):
+def componer(titulo, subtitulo, chips, cuerpo, pie, ruta_pdf, paginas_max=1, escala_fija=None):
     """Escribe el HTML y el PDF. Devuelve (ruta, páginas, escala). Si no hay
     Chrome, deja el HTML y devuelve su ruta.
 
     Se prueba de la letra más grande a la más pequeña hasta que quepa en
     `paginas_max`. Los textos nunca se recortan: si ni con la letra pequeña
-    cabe, se vuelve a una letra legible y el informe ocupa una página más."""
+    cabe, se vuelve a una letra legible y el informe ocupa una página más.
+    Con `escala_fija` no se prueba nada: esa letra y las páginas que salgan (informes largos)."""
     ruta_pdf = Path(ruta_pdf)
     ruta_pdf.parent.mkdir(parents=True, exist_ok=True)
     ruta_html = ruta_pdf.with_suffix(".html")
@@ -143,11 +148,11 @@ def componer(titulo, subtitulo, chips, cuerpo, pie, ruta_pdf, paginas_max=1):
                             "--print-to-pdf=" + str(borrador), ruta_html.as_uri()],
                            capture_output=True, timeout=120)
             return _paginas(borrador) if borrador.exists() else None
-        for escala in (ESCALAS if paginas_max <= 1 else ESCALAS_AMPLIAS):
+        for escala in ((escala_fija,) if escala_fija else ESCALAS if paginas_max <= 1 else ESCALAS_AMPLIAS):
             paginas = imprimir(escala)
             if paginas is None:
                 return ruta_html, None, None
-            if paginas <= paginas_max:
+            if paginas <= paginas_max or escala_fija:
                 break
         else:
             escala = LEGIBLE
@@ -162,7 +167,7 @@ def componer(titulo, subtitulo, chips, cuerpo, pie, ruta_pdf, paginas_max=1):
 # ---------------------------------------------------------------- bloques comunes
 
 PIE = ("Simulación sin dinero real. Análisis automático con datos públicos (Yahoo, Finviz, FRED, SEC, Damodaran, "
-       "Dataroma, Alpha Vantage): no es asesoramiento financiero y puede contener errores.")
+       "Dataroma, Alpha Vantage): no es asesoramiento financiero ni fiscal y puede contener errores.")
 
 
 def bloque_indices(indices, nombres):
@@ -222,3 +227,84 @@ def bloque_plan(ordenes, vacio="Hoy no hay órdenes en el plan.", con_motivo=Tru
         for f, o in zip(filas, ordenes):
             f[-1] = e("; ".join(o.get("motivos") or []))
     return tabla(cab, filas, vacio)
+
+
+def _fecha_corta(f):
+    return "%s/%s" % (f[8:10], f[5:7]) if f else ""
+
+
+def linea_impuestos(imp):
+    """Una frase con los impuestos del año, para los informes cortos."""
+    if not imp:
+        return ""
+    if not imp["ventas_del_anio"]:
+        return "Impuestos: en %d todavía no se ha vendido nada, así que no hay ganancia ni impuesto." % imp["anio"]
+    return "Impuestos: las ventas de %d suman %s (ganancias %s, pérdidas %s). Impuesto estimado: %s.%s" % (
+        imp["anio"], dinero(imp["neto_eur"], "€", True), dinero(imp["ganancias_eur"], "€"), dinero(imp["perdidas_eur"], "€"),
+        dinero(imp["impuesto_eur"], "€"),
+        " La pérdida queda guardada para restar de futuras ganancias." if imp["neto_eur"] < 0 else "")
+
+
+def bloque_impuestos(imp, periodo=None, cuando="hoy", breve=False):
+    """Ganancias e impuestos en claro: lo vendido en el periodo, la cuenta del año y lo que sigue sin vender.
+
+    imp: cartera["impuestos"]. periodo: impuestos.periodo(...) de hoy o de la semana. cuando: "hoy", "esta semana"…
+    breve: sin el párrafo de lo que sigue en cartera (ya va en las cifras) ni la explicación del cálculo.
+    """
+    if not imp:
+        return ""
+    sv = imp.get("sin_vender") or {}
+    partes = [cifras([
+        ("Ganado o perdido con ventas en %d" % imp["anio"], dinero(imp["neto_eur"], "€", True)),
+        ("Impuestos estimados de %d" % imp["anio"], dinero(imp["impuesto_eur"], "€")),
+        ("Te queda después de impuestos", dinero(imp["despues_de_impuestos_eur"], "€", True)),
+        ("Sin vender: aún no paga nada", dinero(sv.get("resultado_eur"), "€", True))])]
+    Cuando = cuando[:1].upper() + cuando[1:]
+    if periodo and periodo["ventas"]:
+        res = periodo["resultado_eur"]
+        if res > 0:
+            frase = "Las ventas de %s dejan una ganancia de %s. Impuesto estimado: %s. Te quedan %s." % (
+                cuando, dinero(res, "€"), dinero(periodo["impuesto_eur"], "€"), dinero(periodo["despues_de_impuestos_eur"], "€"))
+        elif res < 0:
+            frase = ("Las ventas de %s dejan una pérdida de %s. Una pérdida no paga impuestos y resta de las ganancias de este "
+                     "año o de los cuatro siguientes.%s" % (
+                         cuando, dinero(-res, "€"),
+                         " Ya te ahorra %s de impuestos de otras ventas." % dinero(periodo["ahorro_de_impuestos_eur"], "€")
+                         if periodo["ahorro_de_impuestos_eur"] else ""))
+        else:
+            frase = "Las ventas de %s salen a la par: ni ganancia ni impuesto." % cuando
+        partes.append("<p>%s</p>" % frase)
+        partes.append(tabla(
+            [("Valor", 0), ("Comprada", 0), ("Vendida", 0), ("Pagaste", 1), ("Cobraste", 1), ("Resultado", 1), ("En dólares", 1), ("Nota", 0)],
+            [[e(v["ticker"]), e(_fecha_corta(v["fecha_compra"])), e(_fecha_corta(v["fecha"])), dinero(v["coste_eur"], "€"),
+              dinero(v["ingreso_eur"], "€"), dinero(v["resultado_eur"], "€", True), dinero(v["resultado_usd"], "$", True),
+              "pérdida aplazada: se ha comprado el mismo valor en dos meses" if v["aplazada"] else ""] for v in periodo["ventas"]]))
+    else:
+        partes.append("<p>%s no se ha vendido nada: no hay ganancia ni impuesto nuevos.</p>" % Cuando)
+    anual = "En %d las ventas suman %s de ganancias y %s de pérdidas: %s." % (
+        imp["anio"], dinero(imp["ganancias_eur"], "€"), dinero(imp["perdidas_eur"], "€"), dinero(imp["neto_eur"], "€", True))
+    if imp["compensado_de_anios_anteriores_eur"]:
+        anual += " Se restan %s de pérdidas de años anteriores." % dinero(imp["compensado_de_anios_anteriores_eur"], "€")
+    if imp["impuesto_eur"]:
+        anual += " El impuesto estimado es de %s (un %s&nbsp;%% de la ganancia) y se paga %s." % (
+            dinero(imp["impuesto_eur"], "€"), num(imp["tipo_efectivo_pct"], 1), e(imp["se_paga"]))
+    else:
+        anual += " No hay impuesto que pagar."
+        if imp["perdidas_para_anios_siguientes_eur"]:
+            anual += " Quedan %s de pérdidas guardadas para restar de ganancias futuras." % dinero(imp["perdidas_para_anios_siguientes_eur"], "€")
+    if imp["perdidas_aplazadas_eur"]:
+        anual += (" Hay %s de pérdidas aplazadas: no cuentan hasta vender las acciones del mismo valor que se compraron en los "
+                  "dos meses de antes o de después." % dinero(imp["perdidas_aplazadas_eur"], "€"))
+    partes.append("<p>%s</p>" % anual)
+    if breve:
+        return "".join(partes)
+    if sv:
+        extra = sv["impuesto_si_se_vende_todo_hoy_eur"]
+        partes.append("<p>Lo que sigue en cartera lleva %s. Mientras no se venda no paga nada; si se vendiera todo hoy, %s.</p>" % (
+            dinero(sv["resultado_eur"], "€", True),
+            "el impuesto del año subiría %s" % dinero(extra, "€") if extra else "seguiría sin haber impuesto"))
+    partes.append("<p class='gris'>Estimación con las reglas generales del IRPF en España (base del ahorro: 19&nbsp;% hasta 6.000&nbsp;€ de "
+                  "ganancia, 21&nbsp;% hasta 50.000&nbsp;€…), con cada compra y cada venta pasadas a euros al cambio de su día. En la "
+                  "simulación no se paga nada.</p>")
+    return "".join(partes)
+

@@ -5,15 +5,15 @@
     "dia_aportacion": 1
   },
   "riesgo": {
-    "_nota": "Perfil agresivo desde el 25 nov de 2026 (antes: 1 % de riesgo por operación, 25 % por posición, 2 compras al día, hueco de apertura del 3 %, PEG máximo 2 y la misma proporción de 1,5 mañana y tarde). min_recompensa_riesgo se exige al plan de la mañana y a las compras no previstas; min_recompensa_riesgo_apertura, a las compras del plan cuando se recalculan a las 15:45 con el precio real. Con 5 posiciones y todos los stops saltando a la vez, la pérdida prevista es del 7,5 % de la cartera (antes, 5 %).",
+    "_nota": "Perfil agresivo, corregido el 26 nov de 2026: el dueño quiere tomar más riesgo para ganar más, no comprar más ni tener todo el capital invertido. Por eso cada compra arriesga más (1,5 % de la cartera, antes 1 %; posición de hasta el 30 %, antes 25 %) y tiene que poder ganar al menos el doble de lo que arriesga (min_recompensa_riesgo 2, antes 1,5). min_recompensa_riesgo se exige al plan de la mañana y a las compras no previstas; min_recompensa_riesgo_apertura, a las compras del plan cuando se recalculan a las 15:45 con el precio real (que abra algo más caro no tira el plan). Con 5 posiciones y todos los stops saltando a la vez, la pérdida prevista es del 7,5 % de la cartera (antes, 5 %).",
     "riesgo_por_operacion_pct": 1.5,
     "max_posiciones": 5,
     "max_posicion_pct": 30,
-    "max_compras_dia": 3,
+    "max_compras_dia": 2,
     "colchon_caja_pct": 5,
     "min_orden_usd": 5,
-    "min_recompensa_riesgo": 1.5,
-    "min_recompensa_riesgo_apertura": 1.2,
+    "min_recompensa_riesgo": 2.0,
+    "min_recompensa_riesgo_apertura": 1.5,
     "stop_min_pct": 2,
     "stop_max_pct": 15,
     "max_hueco_apertura_pct": 4,
@@ -23,6 +23,10 @@
     "peg_maximo": 2.5,
     "permitir_sin_beneficios": true,
     "dias_sin_comprar_antes_de_resultados": 2
+  },
+  "impuestos": {
+    "_nota": "Para estimar lo que se llevaría Hacienda. Escala de la base del ahorro del IRPF (territorio común) de 2026: cada par es [hasta cuántos euros de ganancia, tipo en %]; null es de ahí en adelante. Si cambia la escala, se cambia aquí. País Vasco y Navarra tienen la suya.",
+    "tramos_ahorro": [[6000, 19], [50000, 21], [200000, 23], [300000, 27], [null, 30]]
   },
   "operativa": {
     "solo_compras": true,
@@ -45,7 +49,8 @@
       "medio": 1.85,
       "bajo": 0.85,
       "apertura": 0.25,
-      "cierre": 0.15
+      "cierre": 0.15,
+      "semanal": 1.0
     },
     "tope_por_llamada_usd": {
       "investigador_fable": 0.9,
@@ -53,7 +58,8 @@
       "mundo": 0.5,
       "estratega": 1.2,
       "apertura": 0.45,
-      "cierre": 0.3
+      "cierre": 0.3,
+      "semanal": 1.5
     }
   },
   "mirofish": {
@@ -99,7 +105,8 @@
     "investigador_medio": "claude-sonnet-5-5",
     "mundo": "claude-sonnet-5-5",
     "apertura": "claude-sonnet-5-5",
-    "cierre": "claude-sonnet-5-5"
+    "cierre": "claude-sonnet-5-5",
+    "semanal": "claude-fable-5-2"
   },
   "limites_fuentes": {
     "finviz_max_valores_dia": 30,

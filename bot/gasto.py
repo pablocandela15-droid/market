@@ -85,6 +85,8 @@ def presupuesto(hoy=None, r=None):
     mf = r.get("mirofish") or {}
     fijo += sum(((mf.get("solo_el") or {}).get(d.isoformat()) or {}).get("tope_usd", mf.get("tope_usd", 0))
                 for d in dias if d.weekday() == 6) if mf else 0
+    if "semanal" in cred["coste_estimado_usd"]:
+        fijo += sum(1 for d in dias if d.weekday() == 5) * coste_tipico("semanal", r)[0]
     libre = cred["usd_mes"] - cred["reserva_usd"] - gastado
     return {"credito_usd": cred["usd_mes"], "reserva_usd": cred["reserva_usd"], "gastado_mes_usd": gastado,
             "proxima_renovacion": renovacion.isoformat(),

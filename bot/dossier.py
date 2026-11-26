@@ -202,6 +202,7 @@ def construir(tarea):
     mercado = _cotizaciones(u["mercado"], errores)
     eurusd = (mercado.get("Euro/dólar") or {}).get("precio") or 1.0
     ref = (mercado.get("S&P 500") or {}).get("precio")
+    cartera.fijar_cambio(eurusd)
     c, nueva = cartera.crear_si_falta(eurusd, ref)
     aporto = False if nueva else cartera.aportar_si_toca(c, eurusd, ref)
     en_cartera = list(c["posiciones"])

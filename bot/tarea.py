@@ -3,6 +3,8 @@
     python3 -m bot.tarea manana      # 7:00  informe y plan del día
     python3 -m bot.tarea apertura    # 15:45 ejecuta el plan en la cuenta simulada
     python3 -m bot.tarea cierre      # 22:10 balance del día
+    python3 -m bot.tarea semanal     # revisión de la semana y lecciones (los sábados va sola tras la mañana)
+    python3 -m bot.tarea renta       # informe para la declaración de la renta (--anio 2026)
 
 Opciones: --sin-modelo (solo datos y reglas), --forzar (ignora el horario; para
 pruebas), --con-plan (usa la sesión del plan en vez de la clave; para pruebas).
@@ -15,7 +17,7 @@ import sys
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 
-from . import alpaca, cartera, dossier, gasto, modelo, ordenes
+from . import alpaca, cartera, dossier, gasto, impuestos, modelo, ordenes
 from . import informe as inf
 from .base import (ESTADO, RAIZ, SUFIJO, ErrorFuente, ahora_madrid, anexar_linea, carpeta_del_dia,
                    carpeta_informes, escribir_json, leer_json, leer_lineas, reglas)
@@ -103,13 +105,17 @@ def _vigilar(c, velas, api, avisos):
             hechos += ordenes.sincronizar(c, api)
         except ErrorFuente as e:
             avisos.append("Alpaca: %s" % e)
-    for v in cartera.revisar_stops(c, velas):
-        hechos.append(v)
-        if api and v["via"] == "alpaca":
-            try:
-                api.cerrar(v["ticker"])
-            except ErrorFuente as e:
-                avisos.append("Alpaca no cerró %s: %s" % (v["ticker"], e))
+    # Las salidas que descubre el bot se anotan al precio al que Alpaca vende de verdad, no al del stop.
+    for s in cartera.detectar_salidas(c, velas):
+        try:
+            hechos.append(ordenes.ejecutar_venta(c, s["ticker"], s["precio"], s["motivo"], api))
+        except ErrorFuente as e:
+            avisos.append("%s (%s): %s" % (s["ticker"], s["motivo"], e))
+    if api:
+        try:
+            avisos.extend("descuadre con Alpaca: %s" % x for x in ordenes.descuadres(c, api))
+        except ErrorFuente as e:
+            avisos.append("no se ha podido cuadrar la cartera con Alpaca: %s" % e)
     return hechos
 
 
@@ -254,7 +260,7 @@ def _estratega(d, informes, nivel, a):
                                    "fuerza_de_sectores", "destacados_por_sector", "fondos_de_tema", "macro",
                                    "media_sector", "candidatos", "prioritarios", "valoracion", "reglas", "cartera",
                                    "marcador", "operaciones_recientes", "grandes_inversores", "avisos_de_ayer",
-                                   "lecciones_recientes", "sorpresas_de_resultados", "analistas", "directivos")}
+                                   "lecciones_vigentes", "lecciones_recientes", "sorpresas_de_resultados", "analistas", "directivos")}
     datos["valores_en_detalle"] = _detalle(d)
     datos["universo_comprable"] = "Las %d empresas del S&P 500 y los valores de los temas." % len(d["universo"])
     datos["titulares"] = [{"ticker": n["ticker"], "titular": n["titular"], "hora": n["hora"]}
@@ -383,6 +389,8 @@ def _el_mundo_hoy(m):
 def _pdf_manana(d, plan, nivel, costes, hechos, avisos):
     c, ind, u, val = d["cartera"], d["indices"], d["universo"], d["valoracion"]
     cuerpo = [inf.bloque_cartera(c)]
+    if c.get("impuestos"):
+        cuerpo.append("<p class='gris'>%s</p>" % inf.linea_impuestos(c["impuestos"]))
     if c.get("aportacion_hoy"):
         cuerpo.append("<p><b>Hoy entra en la cartera: %s.</b></p>" % inf.e(c["aportacion_hoy"]))
     if not d["mercado_hoy"]["abre_hoy"]:
@@ -461,7 +469,8 @@ def manana(a):
             d["cartera"] = _resumen(c, d)
     ayer = sorted((RAIZ / ("datos" + SUFIJO)).glob("*/cierre.json"))
     d["avisos_de_ayer"] = (leer_json(ayer[-1], {}).get("avisos_manana", []) if ayer else [])
-    d["lecciones_recientes"] = [x["leccion"] for x in leer_lineas(ESTADO / "lecciones.jsonl")][-6:]
+    from . import semanal
+    d.update(semanal.lecciones_para_hoy())      # las contrastadas en la revisión semanal y las de los últimos cierres
     nivel, plan, informes, costes = {"nivel": "sin_modelo"}, None, {}, []
     motivo = "se ha pedido sin modelo" if a.sin_modelo else "no hay forma de llamar a los modelos (falta la clave o el programa claude)"
     via = d["via"] = None if a.sin_modelo else modelo.autenticacion()
@@ -504,9 +513,15 @@ def manana(a):
     escribir_json(carpeta / "investigadores.json", informes)
     cartera.guardar(c)
     ruta, paginas, escala = _pdf_manana(d, plan, nivel, costes, hechos, avisos)
-    return "mañana: nivel %s, %d órdenes (%d aprobadas), coste %.2f $ -> %s (%s pág., escala %s)" % (
+    hecho = "mañana: nivel %s, %d órdenes (%d aprobadas), coste %.2f $ -> %s (%s pág., escala %s)" % (
         nivel["nivel"], len(plan["ordenes"]), sum(1 for o in plan["ordenes"] if o["veredicto"] == "APROBADA"),
         plan["coste_usd"], ruta, paginas, escala)
+    if ahora_madrid().weekday() == 5 and previos is None:      # los sábados, detrás, la revisión de la semana
+        try:
+            hecho += " · " + semanal.ejecutar(a)
+        except Exception as e:                                  # un fallo aquí no estropea el informe de la mañana
+            hecho += " · el informe semanal falló: %s" % e
+    return hecho
 
 
 # ---------------------------------------------------------------- 15:45 apertura
@@ -570,6 +585,8 @@ def _lo_hecho_en_la_apertura(cambios, habia_compras, sin_compras):
 
 def _pdf_apertura(d, res, comentario, cambios, habia_compras, sin_compras, hechos, costes, avisos, momento=None):
     cuerpo = [inf.bloque_cartera(res)]
+    if res.get("impuestos"):
+        cuerpo.append("<p class='gris'>%s</p>" % inf.linea_impuestos(res["impuestos"]))
     if comentario:
         cuerpo.append("<h2>Cómo ha abierto</h2><p>%s</p>" % inf.e(comentario))
     cuerpo.append(_lo_hecho_en_la_apertura(cambios, habia_compras, sin_compras))
@@ -609,6 +626,8 @@ def apertura(a):
                                        "noticias", "cartera", "valoracion", "mirofish")}
         datos["valores_en_vigilancia"] = vigilados
         datos["reglas"] = {"riesgo": r["riesgo"], "valoracion": r["valoracion"]}
+        from . import semanal
+        datos.update(semanal.lecciones_para_hoy())
         # Lo que las reglas ya impiden al precio de ahora, para que el análisis no cuente con ello.
         bloqueos = {}
         for o in aprobadas:
@@ -792,6 +811,8 @@ def cierre(a):
         r = reglas()
         datos = {k: d.get(k) for k in ("generado", "mercado_hoy", "indices", "plan_de_la_manana", "sesion_de_hoy",
                                        "noticias", "marcador", "mirofish")}
+        from . import semanal
+        datos.update(semanal.lecciones_para_hoy())
         datos.update({"cartera": res, "operaciones_de_hoy": ops,
                       "apertura": leer_json(carpeta_del_dia("datos") / "apertura.json", {})})
         resp, info = modelo.preguntar("cierre", "cierre", r["modelos"]["cierre"], datos, ESQ_CIERRE, nivel="cierre",
@@ -825,6 +846,7 @@ def cierre(a):
         ("S&P 500 hoy", inf.pct(sp["var_1d"], 2)),
         ("Total frente al S&P 500", inf.dinero(res["ventaja_sobre_referencia_usd"], "$", True))]),
         _cuenta_del_dia(res, ops, velas, hoy),
+        "<h2>Ganancias e impuestos</h2>" + inf.bloque_impuestos(res.get("impuestos"), impuestos.periodo(c, hoy, hoy), "hoy", breve=True),
         "<h2>Balance</h2><p>%s</p>" % inf.e(resp["resumen"]),
         "<p>Semana: %s · Total: %s (%s) · Aportado: %s · Mismo dinero en el S&P 500: %s · Operaciones cerradas: %s%s</p>" % (
             inf.pct(res["resultado_semana_pct"], 2), inf.dinero(res["resultado_total_eur"], "€", True),
@@ -863,7 +885,9 @@ def comprobar(a):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Tareas del bot de bolsa (cartera simulada)")
-    ap.add_argument("tarea", choices=["manana", "apertura", "cierre", "mirofish", "mirofish-sintesis", "comprobar"])
+    ap.add_argument("tarea", choices=["manana", "apertura", "cierre", "semanal", "renta", "mirofish", "mirofish-sintesis",
+                                      "comprobar"])
+    ap.add_argument("--anio", type=int, help="renta: año del informe (por defecto, el actual)")
     ap.add_argument("--sin-modelo", action="store_true", help="solo datos y reglas, sin llamar a ningún modelo")
     ap.add_argument("--forzar", action="store_true", help="ignora el horario del mercado (para pruebas)")
     ap.add_argument("--nivel", choices=["alto", "medio", "bajo"], help="fija el nivel de análisis de la mañana")
@@ -872,8 +896,9 @@ def main(argv=None):
     a = ap.parse_args(argv)
     print("[%s] inicio de %s%s" % (ahora_madrid().strftime("%Y-%m-%d %H:%M:%S"), a.tarea, " (PRUEBA)" if SUFIJO else ""), flush=True)
     try:
-        from . import mirofish
+        from . import mirofish, renta, semanal
         tareas = {"manana": manana, "apertura": apertura, "cierre": cierre, "comprobar": comprobar,
+                  "semanal": semanal.ejecutar, "renta": renta.ejecutar,
                   "mirofish": mirofish.ejecutar, "mirofish-sintesis": mirofish.resintetizar}
         print("[%s] %s" % (ahora_madrid().strftime("%H:%M:%S"), tareas[a.tarea](a)))
         return 0

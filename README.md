@@ -15,6 +15,8 @@ reglas y registra una simulación.
 | 7:00, todos los días | `manana` | Recoge datos, cuatro investigadores y un estratega escriben el plan del día, y las reglas aprueban o bloquean cada orden |
 | 15:45, lunes a viernes | `apertura` | Revisa el plan con el mercado abierto y lanza las órdenes aprobadas en la cuenta simulada |
 | 22:10, lunes a viernes | `cierre` | La cuenta del día (con cuánto empezaste, dónde estuvo invertido y con cuánto terminas), resultado frente al S&P 500 y lecciones |
+| Sábados, tras la de las 7:00 | `semanal` | Qué ha pasado en la semana, con gráficas, ganancias e impuestos, errores con su causa y las lecciones que el bot aplica desde entonces |
+| Cuando se pida | `renta` | Informe para la declaración de la renta: todas las operaciones del año, cada venta en euros y el impuesto estimado |
 | 17:00, domingos | `mirofish` | Simulación de cómo reaccionan inversores y medios, resumida en tesis y predicciones que luego se comprueban |
 
 El detalle está en [docs/tareas-programadas.md](docs/tareas-programadas.md) y
@@ -57,6 +59,8 @@ las fuentes en [docs/estado-del-arte.md](docs/estado-del-arte.md).
 python3 -m bot.tarea manana            # ejecutar una tarea ahora
 python3 -m bot.tarea apertura
 python3 -m bot.tarea cierre
+python3 -m bot.tarea semanal --forzar  # el informe semanal de la semana en curso
+python3 -m bot.tarea renta --anio 2026 # el informe para la renta de ese año
 python3 -m unittest discover -s tests  # pruebas de las reglas y los stops
 ```
 
@@ -72,10 +76,12 @@ carpetas terminadas en `-prueba`.
 | `bot/` | El código. Solo biblioteca estándar de Python |
 | `config/reglas.json` | Capital, riesgo, filtros de valoración, modelos y reparto del crédito de API |
 | `config/universo.json` | Valores vigilados por sector |
+| `config/notas_del_dueno.json`, `config/historial_de_reglas.json` | Lo que el dueño ha corregido y qué reglas había cada día: lo lee la revisión semanal |
 | `tareas/guiones/` | Instrucciones de cada modelo |
 | `tareas/` | Lanzador y programación en el Mac |
+| `../Informes/Renta/<año>/` | El informe para la renta y sus dos hojas CSV |
 | `../Informes/<Mes>/<día>/` | Los PDF, fuera del repositorio: por ejemplo `Informes/Noviembre/23/0700-manana.pdf`. La carpeta se cambia en `config/reglas.json` |
-| `estado/` | Cartera, operaciones, lecciones y gasto de API |
+| `estado/` | Cartera, operaciones, lecciones (las de cada cierre y las vigentes), cambio oficial del euro y gasto de API |
 | `diario/` | Balance de cada día en texto |
 | `datos/`, `registros/` | Datos crudos y registros de cada ejecución |
 
@@ -90,8 +96,9 @@ Las herramientas de datos de `day-trader-skill` se usan desde `../repos/`, sin c
 Están en `config/reglas.json` y las aplica el código, no el modelo:
 
 - Riesgo del 1,5 % de la cartera por operación, con stop obligatorio.
-- Máximo 5 posiciones; ninguna por encima del 30 % de la cartera. Como mucho 3 compras al día.
-- El objetivo debe ganar al menos 1,5 veces lo que arriesga el stop en el plan de la mañana. En la apertura, con el precio real, basta con 1,2 veces.
+- Máximo 5 posiciones; ninguna por encima del 30 % de la cartera. Como mucho 2 compras al día.
+- El objetivo debe ganar al menos 2 veces lo que arriesga el stop en el plan de la mañana. En la apertura, con el precio real, basta con 1,5 veces.
+- No hay obligación de operar ni de tener la cartera invertida: la caja es una posición más.
 - Stop entre el 2 % y el 15 % del precio de entrada.
 - No se compra con PEG por encima de 2,5, sin datos de valoración, ni a 2 días o menos de presentar resultados.
 - En la apertura se descarta la orden si el precio se ha ido más de un 4 % por encima de lo previsto.

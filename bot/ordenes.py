@@ -169,17 +169,73 @@ def ejecutar_compra(c, orden, cantidad, precio, api=None):
                            motivo, "alpaca", enviada["id"], con_salidas, tesis=tesis)
 
 
+def _anotar_venta_real(c, ticker, orden, motivo, previsto=None):
+    """Anota una venta al precio al que Alpaca la ha ejecutado. Si se esperaba otro precio (el del stop,
+    el del objetivo o la última cotización), guarda también ese y la diferencia en dólares."""
+    real = float(orden["filled_avg_price"])
+    extra = {"orden_venta_id": orden.get("id")}
+    if previsto:
+        extra["precio_previsto"] = round(float(previsto), 4)
+        extra["deslizamiento_usd"] = round((real - float(previsto)) * c["posiciones"][ticker]["cantidad"], 2)
+    return cartera.vender(c, ticker, real, motivo, extra=extra)
+
+
 def ejecutar_venta(c, ticker, precio, motivo, api=None):
+    """Vende una posición entera. `precio` es el previsto: el del stop, el del objetivo o la última cotización.
+
+    Sin bróker (modo en seco) se anota a ese precio. Con Alpaca se anota el precio al que el bróker ejecuta
+    de verdad, que puede ser peor: un stop que el bot descubre tarde se vende a lo que cotice en ese momento.
+    Si Alpaca no la ejecuta al instante (bolsa cerrada), la posición sigue en cartera marcada como venta
+    pendiente y se anota cuando se ejecute (`sincronizar`)."""
     p = c["posiciones"][ticker]
-    if api is not None and p["via"] == "alpaca":
-        api.cerrar(ticker)
-    return cartera.vender(c, ticker, precio, motivo)
+    if p["via"] != "alpaca":
+        return cartera.vender(c, ticker, precio, motivo)
+    if api is None:       # la posición está en Alpaca: sin conexión no se anota una venta que no ha ocurrido
+        raise ErrorFuente("no hay conexión con Alpaca: la venta de %s no se ha lanzado y la posición sigue en cartera" % ticker)
+    enviada = api.cerrar(ticker) or {}
+    if not enviada.get("id"):
+        raise ErrorFuente("Alpaca no ha devuelto la orden de venta de %s; la posición sigue en cartera" % ticker)
+    hecha = api.esperar_ejecucion(enviada["id"])
+    if hecha.get("status") != "filled":
+        p["venta_pendiente"] = {"orden_id": enviada["id"], "motivo": motivo, "precio_previsto": precio,
+                                "desde": ahora_madrid().strftime("%Y-%m-%d %H:%M")}
+        raise ErrorFuente("Alpaca aún no ha ejecutado la venta de %s (estado: %s); queda pendiente y se anotará "
+                          "al precio real cuando se ejecute" % (ticker, hecha.get("status")))
+    return _anotar_venta_real(c, ticker, hecha, motivo, precio)
+
+
+def descuadres(c, api):
+    """Diferencias entre la cartera del bot y la cuenta de Alpaca, en frases. Lista vacía si cuadran."""
+    en_alpaca = {p["symbol"]: float(p["qty"]) for p in api.posiciones() or []}
+    out = []
+    for t, p in sorted(c["posiciones"].items()):
+        if p["via"] != "alpaca":
+            continue
+        q = en_alpaca.pop(t, None)
+        if p.get("venta_pendiente"):
+            out.append("la venta de %s está enviada a Alpaca y pendiente de ejecutarse" % t)
+        elif q is None:
+            out.append("%s figura en la cartera del bot y no está en Alpaca" % t)
+        elif abs(q - p["cantidad"]) > 0.0001:
+            out.append("%s: el bot anota %s acciones y Alpaca tiene %s" % (t, _n(p["cantidad"], 4), _n(q, 4)))
+    for t, q in sorted(en_alpaca.items()):
+        out.append("%s está en Alpaca (%s acciones) y no en la cartera del bot" % (t, _n(q, 4)))
+    return out
 
 
 def sincronizar(c, api):
     """Pone al día la cartera con lo ocurrido en Alpaca: compras pendientes ya
-    ejecutadas y salidas (stop u objetivo) que el bróker haya cruzado."""
+    ejecutadas, ventas pendientes y salidas (stop u objetivo) que el bróker haya cruzado."""
     hechos = []
+    for t in list(c["posiciones"]):
+        pen = c["posiciones"][t].get("venta_pendiente")
+        if not pen:
+            continue
+        o = api.orden(pen["orden_id"])
+        if o.get("status") == "filled":
+            hechos.append(_anotar_venta_real(c, t, o, pen["motivo"], pen.get("precio_previsto")))
+        elif o.get("status") in ("canceled", "rejected", "expired"):
+            del c["posiciones"][t]["venta_pendiente"]       # no se vendió: la vigilancia volverá a intentarlo
     for t in list(c.get("pendientes", {})):
         pen = c["pendientes"][t]
         o = api.orden(pen["orden_id"])
@@ -192,7 +248,7 @@ def sincronizar(c, api):
             del c["pendientes"][t]
     for t in list(c["posiciones"]):
         p = c["posiciones"][t]
-        if not (p["via"] == "alpaca" and p.get("stop_en_broker") and p.get("orden_id")):
+        if p.get("venta_pendiente") or not (p["via"] == "alpaca" and p.get("stop_en_broker") and p.get("orden_id")):
             continue
         for pata in api.orden(p["orden_id"]).get("legs") or []:
             if pata.get("status") == "filled":
